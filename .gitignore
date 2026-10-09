@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+
+# Historical copies and trailer-window experiment
+/Extra/
+/Trailer Window Test 1/
+
+# Keep media and downloaded artwork/cache files locally, but do not track them
+# until each asset is needed and cleared for redistribution.
+/media/**
+!/media/
+!/media/spotlight.ico
+/spotlight_meta.json
+/trailer.mp4
+*.part
+
+# Secrets if local development later adds environment-based credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+token*.json
