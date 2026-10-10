@@ -1,6 +1,6 @@
 # SpotLightApp
 
-SpotLightApp is a Windows desktop media and local-events browser. It keeps a local catalog of music, movies, TV, games, sports, and festivals, then enriches that catalog with online details and nearby events.
+SpotLightApp is a Windows desktop media and local-events browser. Its Concerts & Music section shows upcoming Ticketmaster concert and music-festival listings; other sections cover movies, TV, games, sports, and festivals and fairs. Spotlight Search can find saved items across the app or within the current section.
 
 This README describes the current application. It is a starting point for improving and documenting the program; it does not claim that every current integration is ready for public distribution.
 
@@ -9,7 +9,7 @@ This README describes the current application. It is a starting point for improv
 - [`main.py`](main.py) starts the desktop app and connects its screens and integrations.
 - [`database.py`](database.py) stores the local catalog, user accounts, notes, credits, and event dates in SQLite.
 - [`online.py`](online.py) retrieves media details and artwork from online sources.
-- [`events.py`](events.py) retrieves nearby listings from Ticketmaster and builds ticket-search links.
+- [`events.py`](events.py) retrieves nearby and statewide concerts, sports, festivals, and fairs from Ticketmaster, then saves listings in the local catalog.
 - [`dashboard.py`](dashboard.py), [`community.py`](community.py), and [`promote.py`](promote.py) provide the sign-in/dashboard and community-event features.
 - [`docs/architecture.md`](docs/architecture.md) explains the program flow and each active project file.
 - [`docs/api-access.md`](docs/api-access.md) explains the current data providers, credential setup, and distribution considerations.
@@ -41,8 +41,8 @@ The program initializes its SQLite database and user-data folders on startup. Do
 - The automatic YouTube search-results parser has been removed because it scraped YouTube's website. The app can still open a user-initiated YouTube search in the browser and can use trailer IDs returned by TMDB. Neither path requires a YouTube API key.
 - Movie and TV details can use TMDB when a key is configured. Other metadata/artwork lookups use Apple, Steam, and Wikipedia endpoints.
 - IMDb is not currently an integration. IMDb offers limited official datasets for personal, non-commercial use and licensed API/data products; IMDb website scraping is not an appropriate substitute.
-- Ticketmaster event sync already exists and expects a developer key in the local SpotLight configuration file.
-- The local Git repository now exists, but no GitHub remote is connected yet. Automated tests, a dependency lock file, and a packaging recipe have not been added.
+- Ticketmaster event sync expects a developer key in the local SpotLight configuration file. It populates the Concerts & Music section with upcoming music listings; it does not provide music charts or trending tracks.
+- The repository is connected to GitHub and tracks `main`. Automated tests, a dependency lock file, and a packaging recipe have not been added.
 
 ## Before publishing
 

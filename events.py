@@ -33,6 +33,26 @@ FEST = [(("pumpkin", "harvest", "corn", "food", "taste", "wine", "beer", "apple"
         (("car show", "auto", "motor"), "Car Shows"), (("renaissance", "faire", "fantasy", "comic"), "Renaissance & Fantasy"), (("music", "jazz", "blues", "rock", "fest"), "Music Festivals")]
 
 
+def _music_genre(ev):
+    """Map Ticketmaster classifications to the app's readable genre filters."""
+    genre = _norm(ev["genre"] + " " + ev["sub"])
+    if any(word in genre for word in ("hip hop", "rap")): return "Hip-Hop"
+    if any(word in genre for word in ("r b", "rnb", "rhythm and blues", "soul")): return "R&B"
+    if any(word in genre for word in ("electronic", "edm", "dance")): return "Electronic"
+    if any(word in genre for word in ("latin", "salsa", "reggaeton")): return "Latin"
+    if "country" in genre: return "Country"
+    if "jazz" in genre: return "Jazz"
+    if "pop" in genre: return "Pop"
+    if any(word in genre for word in ("rock", "metal", "punk", "alternative", "indie")): return "Rock"
+    return "Other"
+
+
+def _music_type(ev):
+    """Identify music festivals separately from artist and live-show events."""
+    details = _norm(" ".join((ev["name"], ev["genre"], ev["sub"], ev["type"], ev["subtype"])))
+    return "Music Festivals" if "festival" in details else "Bands & Live Shows"
+
+
 def _sport_genre(ev):
     t = _norm(ev["genre"] + " " + ev["sub"] + " " + ev["name"])
     return next((v for k, v in SPORTS.items() if k in t), "Other")
@@ -58,6 +78,7 @@ def _parse(e):
             "img": max(imgs, key=lambda i: i.get("width", 0)).get("url", "") if imgs else "",
             "price": f"from ${pr['min']:.0f}" if pr.get("min") and pr.get("currency") == "USD" else "",
             "segment": (c.get("segment") or {}).get("name") or "", "genre": (c.get("genre") or {}).get("name") or "", "sub": (c.get("subGenre") or {}).get("name") or "",
+            "type": e.get("type", ""), "subtype": e.get("subType", ""),
             "attraction": at.get("name", ""), "desc": f"{v.get('name', '')}, {where}. " + (e.get("info") or e.get("pleaseNote") or "")[:400]}
 
 
@@ -93,24 +114,29 @@ def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=No
 
     Supply ``state_code`` for a state-wide U.S. search. Otherwise, event
     listings use ``radius`` miles around ``lat`` and ``lng``. The return value
-    contains title metadata and counts for sports, festivals, and tours.
+    contains title metadata and counts for music, sports, and festivals.
     """
-    meta, n = {}, {"sports": 0, "festivals": 0, "tours": 0}
+    meta, n = {}, {"music": 0, "sports": 0, "festivals": 0}
 
     def find_events(search_radius, **filters):
         return _events(key, lat, lng, search_radius, state_code=state_code, **filters)
 
-    def keep(cat, ev, genre):
+    def keep(cat, ev, genre, **extra_meta):
         item = {"title": ev["name"], "sub": ev["venue"], "year": ev["date"][:4], "url": ev["url"], "score": float(max(1, 100 - max(ev["days"], 0))), "desc": ev["desc"],
                 "first_shown": "Live listing", "recent_shown": "Next: " + ev["label"], "srcs": ["Ticketmaster"]}
         database.save_media_item(cat, item, [], [{"venue": ev["venue"], "time": ev["label"], "location": ev["where"], "purchase_url": ev["url"]}])
-        meta[(cat, ev["name"])] = {"genre": genre, "online_v3": True, "buy_url": ev["url"], "buy_label": "Ticketmaster" + (f" · {ev['price']}" if ev["price"] else "")}
+        meta[(cat, ev["name"])] = {"genre": genre, "online_v3": True, "buy_url": ev["url"], "buy_label": "Ticketmaster" + (f" · {ev['price']}" if ev["price"] else ""), **extra_meta}
         p = os.path.join(poster_dir, _slug(ev["name"]) + ".jpg")
         if ev["img"] and not os.path.exists(p) and not os.path.exists(p[:-4] + ".png"):
             try: _save(ev["img"], p)
             except Exception: pass
 
     area = f"across {state_code}" if state_code else "nearby"
+    say(f"Searching concerts and music {area}…")
+    for ev in find_events(radius, classificationName="music"):
+        if ev["days"] < 0:
+            continue
+        keep("music", ev, _music_genre(ev), music_genre=_music_genre(ev), music_type=_music_type(ev), music_artist=ev["attraction"]); n["music"] += 1
     say(f"Searching sports {area}…")
     for ev in find_events(radius, classificationName="sports"): keep("sports", ev, _sport_genre(ev)); n["sports"] += 1
     say("Searching festivals and fairs…"); seen = set()
@@ -118,9 +144,4 @@ def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=No
         for ev in find_events(radius, keyword=kw):
             if ev["id"] in seen or ev["segment"].lower() == "sports" or kw not in _norm(ev["name"]).replace(" ", ""): continue
             seen.add(ev["id"]); keep("festivals", ev, _fest_genre(ev)); n["festivals"] += 1
-    say(f"Matching tour dates {area}…")
-    for it in database.load_local_catalog("music"):
-        evs = [ev for ev in find_events(150, keyword=it["sub"], classificationName="music") if _norm(it["sub"]) in _norm(ev["name"] + " " + ev["attraction"])]
-        if evs:
-            database.add_events(it["id"], [{"venue": ev["venue"], "time": ev["label"], "location": ev["where"], "purchase_url": ev["url"]} for ev in evs]); n["tours"] += len(evs)
     return {"meta": meta, **n}

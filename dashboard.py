@@ -137,6 +137,7 @@ class Gate(ctk.CTkFrame):
         ctk.CTkLabel(p, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
         where = ", ".join(x for x in (city, state) if x) or "No location set: create an account with a ZIP code to see what's near you"
         ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14)).pack(pady=(2, 22))
+        row = ctk.CTkFrame(p, fg_color="transparent"); row.pack(pady=(0, 18))
         cards = [("Titles found", st["total"]), ("🎵 Music", c.get("music", 0)), ("🎬 Movies", c.get("movies", 0)), ("📺 TV", c.get("tv", 0)),
                  ("🎮 Games", c.get("games", 0)), ("🏆 Sports", c.get("sports", 0)), ("🎪 Festivals", c.get("festivals", 0)), ("📍 Local events saved", st["events"]),
                  (f"Titles near {city}" if city else "Titles near you", st["near_city"] if city else "-"),
@@ -147,7 +148,7 @@ class Gate(ctk.CTkFrame):
             ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD).pack(pady=(16, 0))
             ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5").pack()
         cfg = events.load_cfg(); live = ctk.CTkFrame(p, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
-        ctk.CTkLabel(live, text="🌐  Live events: sports, festivals and music dates (Ticketmaster)", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
+        ctk.CTkLabel(live, text="🌐  Find concerts, sports, festivals and fairs (Ticketmaster)", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
         area_row = ctk.CTkFrame(live, fg_color="transparent"); area_row.pack(anchor="w", padx=14, pady=(6, 2))
         ctk.CTkLabel(area_row, text="Search area", text_color="#9aa0b5").pack(side="left", padx=(0, 8))
         area_choices = ["Nearby (75 mi)"]
@@ -168,7 +169,6 @@ class Gate(ctk.CTkFrame):
         ctk.CTkButton(lr, text="Get a free key", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
                       command=lambda: webbrowser.open("https://developer.ticketmaster.com/products-and-docs/apis/getting-started/")).pack(side="left")
         s.status = ctk.CTkLabel(live, text=status or "Keys stay on this PC. Movie/TV data: TMDB (this product uses the TMDB API but is not endorsed or certified by TMDB).", text_color="#9aa0b5", font=("Segoe UI", 12)); s.status.pack(pady=(0, 10))
-        row = ctk.CTkFrame(p, fg_color="transparent"); row.pack(pady=18)
         s.sponsor_footer(p)
         ctk.CTkButton(row, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.place_forget).pack(side="left", padx=8)
         ctk.CTkButton(row, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote).pack(side="left", padx=8)

@@ -46,12 +46,12 @@ def _copy_legacy_cache(folder):
 for _cache_name in ("posters", "backdrops", "people"):
     _copy_legacy_cache(_cache_name)
 BG, PANEL, CARD, HOVER = "#0b0b11", "#12121a", "#1a1a26", "#28283e"
-NAV = [("music", "🎵", "Music Charts"), ("movies", "🎬", "Cinema Feeds"), ("tv", "📺", "TV Networks"), ("games", "🎮", "Gaming Hub"), ("sports", "🏆", "Sports & Events"), ("festivals", "🎪", "Festivals & Fairs")]
+NAV = [("music", "🎵", "Concerts & Music"), ("movies", "🎬", "Cinema Feeds"), ("tv", "📺", "TV Networks"), ("games", "🎮", "Gaming Hub"), ("sports", "🏆", "Sports & Events"), ("festivals", "🎪", "Festivals & Fairs")]
 ACC = {"music": (214, 64, 190), "movies": (226, 72, 58), "tv": (36, 182, 196), "games": (84, 214, 108), "sports": (255, 140, 40), "festivals": (150, 110, 255)}
 FXK = {"music": "music", "movies": "movies", "tv": "tv", "games": "games", "sports": "tv", "festivals": "music"}
-TAG = {"music": "Trending tracks", "movies": "Now showing", "tv": "Streaming now", "games": "Playing now", "sports": "Upcoming events", "festivals": "Happening soon"}
-UNIT = {"sports": "event", "festivals": "event"}
-GENRES = {"music": [("Pop", "🎤"), ("Hip-Hop", "🎧"), ("Rock", "🎸"), ("Electronic", "🎛️"), ("R&B", "💜"), ("Country", "🤠"), ("Latin", "💃"), ("Jazz", "🎷")],
+TAG = {"music": "Upcoming concerts & music events", "movies": "Now showing", "tv": "Streaming now", "games": "Playing now", "sports": "Upcoming events", "festivals": "Happening soon"}
+UNIT = {"music": "event", "sports": "event", "festivals": "event"}
+GENRES = {"music": [("Pop", "🎤"), ("Hip-Hop", "🎧"), ("Rock", "🎸"), ("Electronic", "🎛️"), ("R&B", "💜"), ("Country", "🤠"), ("Latin", "💃"), ("Jazz", "🎷"), ("Other", "🎼")],
           "movies": [("Action", "💥"), ("Drama", "🎭"), ("Comedy", "😂"), ("Sci-Fi", "🚀"), ("Horror", "👻"), ("Thriller", "🔪"), ("Animation", "✏️"), ("Indie", "🎞️")],
           "tv": [("Drama", "🎭"), ("Comedy", "😂"), ("Sci-Fi", "🚀"), ("Reality", "📡"), ("Docs", "🌍"), ("Animation", "✏️")],
           "games": [("Action", "⚔️"), ("RPG", "🐉"), ("Strategy", "♟️"), ("Shooter", "🎯"), ("Indie", "🕹️"), ("Sports", "🏆")],
@@ -60,12 +60,6 @@ GENRES = {"music": [("Pop", "🎤"), ("Hip-Hop", "🎧"), ("Rock", "🎸"), ("El
           "festivals": [("Harvest & Food", "🎃"), ("County & State Fairs", "🎡"), ("Music Festivals", "🎶"), ("Arts & Crafts", "🎨"), ("Parades & Holidays", "🎆"), ("Cultural", "🌍"), ("Film Festivals", "🎬"), ("Car Shows", "🚗"), ("Renaissance & Fantasy", "🏰")]}
 # (cat, title, sub, year, score, desc, first_shown, recent_shown, genre, [(name, role, bio)], [(venue, time, location)])  -- demo data
 SEED = [
- ("music", "Blinding Lights", "The Weeknd", "2020", 96.5, "Synthesized electronic synth-wave chart-topper.", "Nov 29, 2019", "On Tour Now", "Pop",
-  [("Abel Tesfaye", "Lead Vocalist", "Grammy award winning alternative R&B visionary pioneer."), ("Max Martin", "Key Producer", "Legendary Swedish structural pop hit-maker.")],
-  [("Columbus Nationwide Arena", "Oct 14, 2026 @ 7:30 PM", "Columbus, OH"), ("Cleveland Rocket Mortgage FieldHouse", "Oct 17, 2026 @ 8:00 PM", "Cleveland, OH")]),
- ("music", "As It Was", "Harry Styles", "2022", 93.1, "Synth-pop single about change and distance.", "Apr 1, 2022", "Chart staple", "Pop", [("Harry Styles", "Lead Vocalist", "Solo pop star and former One Direction member.")], []),
- ("music", "SICKO MODE", "Travis Scott", "2018", 91.4, "Multi-part trap anthem built on beat switches.", "Aug 3, 2018", "Festival staple", "Hip-Hop", [("Travis Scott", "Lead Artist", "Houston rapper, producer and festival headliner.")], []),
- ("music", "Bohemian Rhapsody", "Queen", "1975", 97.0, "Six-minute rock opera that broke every single-release rule.", "Oct 31, 1975", "Evergreen", "Rock", [("Freddie Mercury", "Lead Vocalist", "Queen's frontman and songwriter of the song.")], []),
  ("movies", "Everything Everywhere All at Once", "A24", "2022", 94.2, "An aging Chinese immigrant is swept up in an insane adventure across alternate realities.", "March 11, 2022", "Tonight at Multiplex", "Sci-Fi",
   [("Michelle Yeoh", "Evelyn Wang", "Academy Award winning martial arts and dramatic performance icon."), ("Ke Huy Quan", "Waymond Wang", "Acclaimed comeback cinema star and stunt coordinator.")],
   [("AMC Easton Town Center 30", "Tonight @ 7:00 PM & 9:45 PM", "Columbus, OH"), ("Gateway Film Center", "Tomorrow @ 4:30 PM", "High St, Columbus, OH")]),
@@ -323,6 +317,7 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__(); self.title("Spotlight - Local Media Dashboard"); self.geometry("1440x880"); self.minsize(1100, 700); self.configure(fg_color=BG)
         self.meta, self.cat, self.genre, self.items, self.sel, self.imgs, self.cards, self.online, self._rs = Meta(), "music", None, [], None, [], {}, None, None
+        self.page = 0; self.search_job = None; self.search_active = False; self.search_results = []; self.search_query = ""
         self.uiq, self.sel_cat, self.pinned, self._hj, self._bio = queue.Queue(), None, False, None, None
         self.cast_all = self._tproc = None
         self.load_logos(); self.after(300, self.set_icon)
@@ -330,7 +325,17 @@ class App(ctk.CTk):
 
     # ---------- data ----------
     def seed(self):
-        if self.meta.d.get("_seeded_v3"): return
+        if self.meta.d.get("_seeded_v4"): return
+        # Remove only the four known sample tracks from earlier versions.
+        sample_tracks = {"Blinding Lights", "As It Was", "SICKO MODE", "Bohemian Rhapsody"}
+        for item in database.load_local_catalog("music"):
+            if g(item, "title") in sample_tracks:
+                try:
+                    sources = json.loads(g(item, "sources", "[]") or "[]")
+                except (TypeError, ValueError):
+                    sources = []
+                if "Demo" in sources:
+                    database.delete_item(g(item, "id"))
         have = {c: {g(i, "title") for i in database.load_local_catalog(c)} for c in ACC}
         for cat, title, sub, year, score, desc, first, recent, genre, cast, ev in SEED:
             try:
@@ -339,13 +344,37 @@ class App(ctk.CTk):
                                              [{"name": n, "role": r, "bio": b} for n, r, b in cast], [{"venue": v, "time": t, "location": l, "purchase_url": ""} for v, t, l in ev])
             except Exception as e: print("seed skipped:", title, e)
             self.meta.d.setdefault(f"{cat}|{title}", {}).setdefault("genre", genre)
-        self.meta.d["_seeded_v3"] = True; self.meta.save()
+        self.meta.d["_seeded_v4"] = True; self.meta.save()
 
-    def genre_of(self, it): return self.meta.get(self.cat, g(it, "title")).get("genre", "Other")
+    def genre_of(self, it):
+        metadata = self.meta.get(self.cat, g(it, "title"))
+        genre = metadata.get("music_genre") if self.cat == "music" else None
+        genre = genre or metadata.get("genre", "Other")
+        # Older live listings stored their event type in this field.
+        return "Other" if self.cat == "music" and genre in {"Bands & Live Shows", "Music Festivals"} else genre
+
+    def music_type_of(self, it):
+        metadata = self.meta.get("music", g(it, "title"))
+        return metadata.get("music_type") or (metadata.get("genre") if metadata.get("genre") in {"Bands & Live Shows", "Music Festivals"} else "Bands & Live Shows")
 
     # ---------- layout ----------
     def build(self):
         self.hero = Stage(self, "hero", 150); self.hero.pack(fill="x")
+        searchbar = ctk.CTkFrame(self, fg_color="#151520", corner_radius=0, height=58)
+        searchbar.pack(fill="x"); searchbar.pack_propagate(False)
+        ctk.CTkLabel(searchbar, text="⌕  SPOTLIGHT SEARCH  ·  Ctrl+K", text_color="#c9a45c", font=("Segoe UI", 13, "bold")).pack(side="left", padx=(18, 12))
+        self.search_entry = ctk.CTkEntry(searchbar, height=38, placeholder_text="Find a concert, artist, movie, venue, game, or event…",
+                                         font=("Segoe UI", 15), border_width=1, corner_radius=12)
+        self.search_entry.pack(side="left", fill="x", expand=True, padx=4, pady=8)
+        self.search_entry.bind("<KeyRelease>", self.schedule_search)
+        self.search_entry.bind("<Return>", lambda _event: self.run_search())
+        self.search_scope = ctk.StringVar(value="Everywhere")
+        self.search_scope_menu = ctk.CTkOptionMenu(searchbar, values=["Everywhere", "This section"], variable=self.search_scope,
+                                                   width=145, height=38, command=lambda _choice: self.schedule_search())
+        self.search_scope_menu.pack(side="left", padx=7)
+        ctk.CTkButton(searchbar, text="×", width=38, height=38, fg_color=CARD, hover_color=HOVER,
+                      command=self.clear_search).pack(side="left", padx=(0, 12))
+        self.bind_all("<Control-k>", self.focus_search, add="+")
         body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0); body.pack(fill="both", expand=True)
         rail = ctk.CTkFrame(body, width=156, fg_color=PANEL, corner_radius=0); rail.pack(side="left", fill="y"); rail.pack_propagate(False)
         self.navbtn = {}
@@ -360,7 +389,7 @@ class App(ctk.CTk):
         pb.pack(side="bottom", fill="x", pady=12, padx=8)
         self.feed = ctk.CTkFrame(body, width=410, fg_color=PANEL, corner_radius=0); self.feed.pack(side="left", fill="y", padx=(2, 2)); self.feed.pack_propagate(False)
         top = ctk.CTkFrame(self.feed, fg_color="transparent"); top.pack(fill="x", padx=12, pady=(14, 6))
-        self.back = ctk.CTkButton(top, text="‹", width=38, height=38, font=("Segoe UI", 24, "bold"), fg_color=CARD, hover_color=HOVER, command=self.show_genres)
+        self.back = ctk.CTkButton(top, text="‹", width=38, height=38, font=("Segoe UI", 24, "bold"), fg_color=CARD, hover_color=HOVER, command=self.back_to_list)
         self.feed_title = ctk.CTkLabel(top, text="", font=("Segoe UI", 24, "bold"), anchor="w"); self.feed_title.pack(side="left", padx=8)
         self.list = ctk.CTkScrollableFrame(self.feed, fg_color="transparent"); self.list.pack(fill="both", expand=True, padx=6, pady=(0, 8))
         self.insp = ctk.CTkScrollableFrame(body, fg_color=BG, corner_radius=0); self.insp.pack(side="left", fill="both", expand=True); self.insp_box = self.insp._parent_frame; self.feed.pack_forget(); self.feed.bind("<Leave>", self.hover_leave, add="+")
@@ -488,12 +517,15 @@ class App(ctk.CTk):
         self._hj = None
         if not self.pinned and not self._inside(): self.hide_panel(); self.mark_nav(None)
     def click_cat(self, cat):
+        if self.search_active:
+            self.clear_search()
         shown = self.feed.winfo_ismapped()
         if self.pinned and self.cat == cat and shown: self.pinned = False; self.hide_panel(); return
         if self.cat == cat and not shown and self.sel is not None and self.sel_cat == cat: self.pinned = True; self.show_panel(); return
         self.pinned = True; self.open_cat(cat)
     def pick_genre(self, n):
         if not self.pinned: self.pinned = True; self.open_cat(self.cat)
+        self.page = 0
         self.show_feed(n)
     def home(self):
         self.open_cat("music"); self.hide_panel(); self.mark_nav(None)
@@ -510,39 +542,185 @@ class App(ctk.CTk):
         name = next(n for k, _, n in NAV if k == cat)
         amb = os.path.join(MEDIA, "ambient", cat + ".mp4")
         self.hero.play(amb, FXK[cat], acc, None, (name.upper(), TAG[cat]), dim=0.65)
-        self.theater.play(None, FXK[cat], acc, None, ("Select a title", "Pick a genre, then choose from the trending feed"))
-        self.title.configure(text="Pick a genre, then a title"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
+        self.theater.play(None, FXK[cat], acc, None, ("Select an event" if cat == "music" else "Select a title", "Pick a genre or event type, then choose an event" if cat == "music" else "Pick a genre, then choose from the trending feed"))
+        self.title.configure(text="Choose a genre or event type" if cat == "music" else "Pick a genre, then a title"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
         self.close_bio(); self.poster.pack_forget(); [b.pack_forget() for b in (self.find_btn, self.buy_btn, self.trailer_btn, self.mute_btn)]; self.show_promo(True)
         for f in (self.cast_row, self.ev_box):
             for w in f.winfo_children(): w.destroy()
         self.show_genres(); self.show_panel()
     def show_genres(self):
+        self.search_active = False; self.search_results = []
         self.genre = None; self.back.pack_forget(); self.feed_title.configure(text="Events" if self.cat in UNIT else "Genres")
         for w in self.list.winfo_children(): w.destroy()
         cnt = {}
-        for it in self.items: cnt[self.genre_of(it)] = cnt.get(self.genre_of(it), 0) + 1
-        tiles = [("All", "⭐", len(self.items))] + [(n, ic, cnt.get(n, 0)) for n, ic in GENRES[self.cat]]
+        if self.cat == "music":
+            for item in self.items:
+                for label in (self.genre_of(item), self.music_type_of(item)):
+                    cnt[label] = cnt.get(label, 0) + 1
+            tiles = ([ ("All", "⭐", len(self.items)) ] if self.items else [])
+            tiles.extend((name, icon, cnt.get(name, 0)) for name, icon in (("Bands & Live Shows", "🎤"), ("Music Festivals", "🎪")) if cnt.get(name, 0))
+            tiles.extend((name, icon, cnt.get(name, 0)) for name, icon in GENRES[self.cat] if cnt.get(name, 0))
+        else:
+            for it in self.items: cnt[self.genre_of(it)] = cnt.get(self.genre_of(it), 0) + 1
+            tiles = ([ ("All", "⭐", len(self.items)) ] if self.items else [])
+            tiles.extend((n, ic, cnt.get(n, 0)) for n, ic in GENRES[self.cat] if cnt.get(n, 0))
+        if not tiles:
+            empty = "No events have been found in this section yet." if self.cat in UNIT else "No items have been saved in this section yet."
+            ctk.CTkLabel(self.list, text=empty + "\nTry Spotlight Search above or sync events from the dashboard.",
+                         text_color="#9aa0b5", font=("Segoe UI", 15), wraplength=300, justify="left").pack(padx=18, pady=32)
         self.list.grid_columnconfigure((0, 1), weight=1)
         for i, (n, ic, c) in enumerate(tiles):
-            ctk.CTkButton(self.list, text=f"{ic}  {n}\n{c} {UNIT.get(self.cat, 'title')}{'s' if c != 1 else ''}", height=92, corner_radius=16, font=("Segoe UI", 17, "bold"),
+            display_name = n.replace(" & ", " &\n") if len(n) > 15 and " & " in n else n.replace(" ", "\n", 1) if len(n) > 15 else n
+            ctk.CTkButton(self.list, text=f"{ic}  {display_name}\n{c} {UNIT.get(self.cat, 'title')}{'s' if c != 1 else ''}", height=92, corner_radius=16, font=("Segoe UI", 15, "bold"),
                           fg_color=hexc(ACC[self.cat], 0.32 + 0.05 * (i % 5)), hover_color=hexc(ACC[self.cat], 0.75), command=lambda n=n: self.pick_genre(n)).grid(row=i // 2, column=i % 2, padx=5, pady=5, sticky="ew")
     def show_feed(self, genre):
+        self.search_active = False
         self.genre = genre; self.back.pack(side="left", before=self.feed_title); self.feed_title.configure(text=f"{genre} · {TAG[self.cat]}" if genre != "All" else TAG[self.cat])
         for w in self.list.winfo_children(): w.destroy()
         self.list.grid_columnconfigure((0, 1), weight=0)
-        rows = [i for i in self.items if genre == "All" or self.genre_of(i) == genre]
-        rows.sort(key=lambda i: -float(g(i, "score", 0) or 0)); self.shown, self.cards, self.imgs = rows, {}, []
-        if not rows: ctk.CTkLabel(self.list, text="Nothing here yet.\nAdd titles or run the scraper.", text_color="#888", font=("Segoe UI", 15)).pack(pady=40)
-        for n, it in enumerate(rows):
+        if self.cat == "music":
+            rows = [item for item in self.items if genre == "All" or
+                    (genre in {"Bands & Live Shows", "Music Festivals"} and self.music_type_of(item) == genre) or
+                    self.genre_of(item) == genre]
+        else:
+            rows = [item for item in self.items if genre == "All" or self.genre_of(item) == genre]
+        rows.sort(key=lambda item: -float(g(item, "score", 0) or 0))
+        page_size = 25
+        page_count = max(1, (len(rows) + page_size - 1) // page_size)
+        self.page = min(max(0, self.page), page_count - 1)
+        start = self.page * page_size
+        self.shown, self.cards, self.imgs = rows[start:start + page_size], {}, []
+        if not rows:
+            empty_message = ("No concerts or live music events saved yet.\nAdd your Ticketmaster key on the dashboard and select Find events."
+                             if self.cat == "music" else "Nothing here yet.\nAdd titles or run the scraper.")
+            ctk.CTkLabel(self.list, text=empty_message, text_color="#888", font=("Segoe UI", 15), wraplength=300).pack(pady=40)
+        for n, it in enumerate(self.shown):
             row = ctk.CTkFrame(self.list, fg_color=CARD, corner_radius=14, height=108); row.pack(fill="x", padx=4, pady=5); row.pack_propagate(False)
             im = ctk.CTkImage(art(g(it, "title"), ACC[self.cat], (116, 172)), size=(58, 86)); self.imgs.append(im)
             ctk.CTkLabel(row, text="", image=im).pack(side="left", padx=10, pady=8)
             col = ctk.CTkFrame(row, fg_color="transparent"); col.pack(side="left", fill="both", expand=True, pady=10)
-            ctk.CTkLabel(col, text=f"#{n + 1}", font=("Segoe UI", 12, "bold"), text_color=hexc(ACC[self.cat]), anchor="w").pack(fill="x")
+            ctk.CTkLabel(col, text=f"#{start + n + 1}", font=("Segoe UI", 12, "bold"), text_color=hexc(ACC[self.cat]), anchor="w").pack(fill="x")
             ctk.CTkLabel(col, text=g(it, "title"), font=("Segoe UI", 17, "bold"), anchor="w", justify="left", wraplength=190).pack(fill="x")
             ctk.CTkLabel(col, text=f"{sub_of(it)} · {g(it, 'year')}".strip(" ·"), font=("Segoe UI", 13), text_color="#9aa0b5", anchor="w").pack(fill="x")
             ctk.CTkLabel(row, text=f"{float(g(it, 'score', 0) or 0):.0f}", width=46, height=46, corner_radius=23, fg_color=hexc(ACC[self.cat], 0.6), font=("Segoe UI", 16, "bold")).pack(side="right", padx=10)
             bind_all(row, lambda e, n=n: self.select(n)); self.cards[n] = row
+        if rows:
+            controls = ctk.CTkFrame(self.list, fg_color="transparent")
+            controls.pack(fill="x", padx=4, pady=(12, 18))
+            ctk.CTkButton(controls, text="‹  Previous", width=110, fg_color=CARD, hover_color=HOVER,
+                          state="normal" if self.page > 0 else "disabled",
+                          command=lambda: self.change_feed_page(-1)).pack(side="left")
+            ctk.CTkLabel(controls, text=f"{start + 1}–{min(start + len(self.shown), len(rows))} of {len(rows)} events" if self.cat == "music" else f"{start + 1}–{min(start + len(self.shown), len(rows))} of {len(rows)}",
+                         text_color="#9aa0b5").pack(side="left", expand=True)
+            ctk.CTkButton(controls, text="Next  ›", width=110, fg_color=CARD, hover_color=HOVER,
+                          state="normal" if self.page + 1 < page_count else "disabled",
+                          command=lambda: self.change_feed_page(1)).pack(side="right")
+
+    def change_feed_page(self, step):
+        self.page += step
+        if self.search_active: self.show_search_results()
+        else: self.show_feed(self.genre)
+
+    def focus_search(self, _event=None):
+        self.search_entry.focus_set(); self.search_entry.select_range(0, "end")
+        return "break"
+
+    def schedule_search(self, _event=None):
+        if self.search_job:
+            try: self.after_cancel(self.search_job)
+            except Exception: pass
+        self.search_job = self.after(280, self.run_search)
+
+    def run_search(self):
+        self.search_job = None
+        query = self.search_entry.get().strip()
+        if not query:
+            self.clear_search(); return
+        self.search_query = query
+        self.page = 0
+        normalized = online._norm(query)
+        terms = normalized.split()
+        if len(normalized) < 2:
+            self.search_results = []
+            self.show_search_results("Keep typing to search Spotlight.")
+            return
+        scope = [self.cat] if self.search_scope.get() == "This section" else list(ACC)
+        matches = []
+        for category in scope:
+            for item in database.load_local_catalog(category):
+                metadata = self.meta.get(category, g(item, "title"))
+                searchable = online._norm(" ".join((g(item, "title"), sub_of(item), g(item, "description"),
+                                                       g(item, "year"), metadata.get("genre", ""), metadata.get("music_genre", ""),
+                                                       metadata.get("music_type", ""), metadata.get("music_artist", ""))))
+                if not all(term in searchable for term in terms):
+                    continue
+                title = online._norm(g(item, "title"))
+                rank = 100 if title == normalized else 60 if title.startswith(normalized) else 30 if normalized in title else 0
+                result = dict(item); result["_search_category"] = category
+                matches.append((rank, float(g(item, "score", 0) or 0), category, result))
+        matches.sort(key=lambda match: (-match[0], -match[1], g(match[3], "title").casefold()))
+        self.search_results = [(category, item) for _rank, _score, category, item in matches]
+        self.show_search_results()
+
+    def show_search_results(self, message=None):
+        self.search_active = True
+        scope_label = "Everywhere" if self.search_scope.get() == "Everywhere" else next((name for key, _icon, name in NAV if key == self.cat), "This section")
+        self.feed_title.configure(text=f"Search · {scope_label} ({len(self.search_results)})")
+        self.back.pack(side="left", before=self.feed_title)
+        for widget in self.list.winfo_children(): widget.destroy()
+        self.list.grid_columnconfigure((0, 1), weight=0)
+        if message or not self.search_results:
+            ctk.CTkLabel(self.list, text=message or "No matches yet. Try another name, artist, venue, or keyword.",
+                         text_color="#9aa0b5", font=("Segoe UI", 15), wraplength=300, justify="left").pack(padx=16, pady=32)
+            self.shown, self.cards, self.imgs = [], {}, []
+            return
+        page_size = 25
+        page_count = (len(self.search_results) + page_size - 1) // page_size
+        self.page = min(max(self.page, 0), page_count - 1)
+        start = self.page * page_size
+        self.shown = [item for _category, item in self.search_results[start:start + page_size]]
+        self.cards, self.imgs = {}, []
+        for index, item in enumerate(self.shown):
+            category = item["_search_category"]; accent = ACC[category]
+            row = ctk.CTkFrame(self.list, fg_color=CARD, corner_radius=14, height=96); row.pack(fill="x", padx=4, pady=4); row.pack_propagate(False)
+            image = ctk.CTkImage(art(g(item, "title"), accent, (104, 152)), size=(52, 76)); self.imgs.append(image)
+            ctk.CTkLabel(row, text="", image=image).pack(side="left", padx=9, pady=7)
+            details = ctk.CTkFrame(row, fg_color="transparent"); details.pack(side="left", fill="both", expand=True, pady=8)
+            category_name = next((name for key, _icon, name in NAV if key == category), category.title())
+            ctk.CTkLabel(details, text=category_name.upper(), font=("Segoe UI", 10, "bold"), text_color=hexc(accent), anchor="w").pack(fill="x")
+            ctk.CTkLabel(details, text=g(item, "title"), font=("Segoe UI", 15, "bold"), anchor="w", justify="left", wraplength=220).pack(fill="x")
+            metadata = self.meta.get(category, g(item, "title"))
+            subtitle = " · ".join(value for value in (metadata.get("music_artist") or sub_of(item), g(item, "year")) if value)
+            ctk.CTkLabel(details, text=subtitle, font=("Segoe UI", 12), text_color="#9aa0b5", anchor="w").pack(fill="x")
+            bind_all(row, lambda _event, number=index: self.select(number)); self.cards[index] = row
+        controls = ctk.CTkFrame(self.list, fg_color="transparent"); controls.pack(fill="x", padx=4, pady=(12, 18))
+        ctk.CTkButton(controls, text="‹  Previous", width=110, fg_color=CARD, hover_color=HOVER, state="normal" if self.page > 0 else "disabled",
+                      command=lambda: self.change_feed_page(-1)).pack(side="left")
+        ctk.CTkLabel(controls, text=f"{start + 1}–{min(start + len(self.shown), len(self.search_results))} of {len(self.search_results)} matches",
+                     text_color="#9aa0b5").pack(side="left", expand=True)
+        ctk.CTkButton(controls, text="Next  ›", width=110, fg_color=CARD, hover_color=HOVER, state="normal" if self.page + 1 < page_count else "disabled",
+                      command=lambda: self.change_feed_page(1)).pack(side="right")
+
+    def clear_search(self):
+        if self.search_job:
+            try: self.after_cancel(self.search_job)
+            except Exception: pass
+            self.search_job = None
+        if self.search_entry.get(): self.search_entry.delete(0, "end")
+        self.search_query = ""; self.search_results = []; self.search_active = False; self.page = 0
+        if hasattr(self, "list") and self.list.winfo_exists(): self.show_genres()
+
+    def back_to_list(self):
+        if self.search_active and self.sel is not None:
+            self.sel = None; self.sel_cat = None; self.close_bio(); self.show_promo(True)
+            self.poster.pack_forget()
+            for button in (self.find_btn, self.buy_btn, self.trailer_btn, self.mute_btn): button.pack_forget()
+            self.title.configure(text="Search results"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
+            for frame in (self.cast_row, self.ev_box, self.about_box):
+                for widget in frame.winfo_children(): widget.destroy()
+            return
+        if self.search_active: self.clear_search()
+        else: self.show_genres()
 
     # ---------- detail page ----------
     def find_video(self, title):
@@ -558,10 +736,20 @@ class App(ctk.CTk):
         out = Image.new("RGBA", (size, size), (0, 0, 0, 0)); out.paste(src.resize((size, size), Image.LANCZOS).convert("RGBA"), (0, 0), mk)
         return ctk.CTkImage(out, size=(size, size))
     def select(self, n):
-        it = self.shown[n]; self.sel = it; self.sel_cat = self.cat; self.close_bio(); self.show_promo(False)
-        for k, c in self.cards.items(): c.configure(fg_color=hexc(ACC[self.cat], 0.35) if k == n else CARD)
+        it = self.shown[n]
+        category = it.get("_search_category", self.cat)
+        if category != self.cat:
+            self.cat = category; self.items = list(database.load_local_catalog(category)); self.mark_nav(category)
+            name = next(label for key, _icon, label in NAV if key == category)
+            self.hero.configure(height=190 if category in {"movies", "tv"} else 150)
+            self.hero.play(os.path.join(MEDIA, "ambient", category + ".mp4"), FXK[category], ACC[category], None,
+                           (name.upper(), TAG[category]), dim=0.65)
+        self.sel = it; self.sel_cat = category; self.close_bio(); self.show_promo(False)
+        for k, card in self.cards.items():
+            card_category = self.shown[k].get("_search_category", self.cat)
+            card.configure(fg_color=hexc(ACC[card_category], 0.35) if k == n else CARD)
         self.render_detail(it); self.fetch_online(it)
-        if self.auto_var.get() and self.meta.get(self.cat, g(it, "title")).get("yt_id"): self.play_trailer()
+        if self.auto_var.get() and self.meta.get(category, g(it, "title")).get("yt_id"): self.play_trailer()
     def render_detail(self, it):
         cat = self.sel_cat; acc = ACC[cat]; title = g(it, "title"); m = self.meta.get(cat, title); city = (self.gate.user or {}).get("city", "") if hasattr(self, "gate") else ""
         vid = m.get("video") if m.get("video") and os.path.exists(m["video"]) else self.find_video(title)
@@ -708,7 +896,10 @@ class App(ctk.CTk):
         threading.Thread(target=work, daemon=True).start()
     def apply_sync(self, res, search_label="near you"):
         for (cat, title), kw in res["meta"].items(): self.meta.d.setdefault(f"{cat}|{title}", {}).update(kw)
-        self.meta.save(); self.gate.show_dashboard(f"Done: {res['sports']} sports, {res['festivals']} festival events, {res['tours']} tour dates found {search_label}.")
+        self.meta.save()
+        if self.cat == "music" and self.sel is None:
+            self.items = list(database.load_local_catalog("music"))
+        self.gate.show_dashboard(f"Done: {res['music']} concerts/music events, {res['sports']} sports, and {res['festivals']} festivals and fairs found {search_label}.")
     def open_buy(self):
         if self.sel: url = self.meta.get(self.sel_cat, g(self.sel, "title")).get("buy_url"); url and webbrowser.open(url)
     def close_bio(self):

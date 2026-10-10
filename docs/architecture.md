@@ -5,7 +5,7 @@
 1. `main.py` imports the application modules, sets up project-relative media folders, defines category and display helpers, and defines the `App` window.
 2. `App.__init__` loads display metadata, seeds demo catalog entries once, builds the interface, starts background connection monitoring, and creates the sign-in/dashboard gate.
 3. `dashboard.Gate` handles guest access, account creation, sign-in, location lookup from a ZIP code, dashboard statistics, and controls for event synchronization.
-4. The catalog is read from SQLite through `database.py`. Selecting a title displays its local metadata, cast/crew, events, and notes.
+4. The catalog is read from SQLite through `database.py`. Selecting a title displays its local metadata, cast/crew, events, and notes. Spotlight Search stays available above the content and searches saved catalog fields across all categories or the current category.
 5. `online.py` retrieves missing details in background threads. `main.py` returns results to the UI thread through a queue.
 6. `events.py` syncs Ticketmaster events; `community.py` syncs an optional organizer feed. The `promote.py` form lets an organizer prepare a submission for curator review.
 
@@ -13,7 +13,7 @@
 
 ### `main.py`
 
-The application entry point and primary UI controller. It owns navigation, media cards and detail views, generated artwork and motion backgrounds, trailer controls, notes, and the coordination of background lookup/sync jobs. It imports the modules below. It also seeds example rows in the local catalog when its metadata flag is absent.
+The application entry point and primary UI controller. It owns navigation, media cards and detail views, Spotlight Search, generated artwork and motion backgrounds, trailer controls, notes, and the coordination of background lookup/sync jobs. Search ranks local matches from titles, descriptions, years, artists, event types, and other saved metadata; it displays up to 25 results per page. Category filters with no matching items are hidden. It imports the modules below. It also seeds example rows in the local catalog when its metadata flag is absent.
 
 ### `database.py`
 
@@ -29,7 +29,7 @@ Contains HTTP helpers and provider integrations. Its code can retrieve title/art
 
 ### `events.py`
 
-Loads and saves API settings, constructs ticket-vendor search URLs, parses Ticketmaster Discovery API results, categorizes sports/festivals, and syncs nearby events and music tour dates into the local catalog. Its configuration file is `~/.spotlight/config.json`.
+Loads and saves API settings, constructs ticket-vendor search URLs, parses Ticketmaster Discovery API results, categorizes music events, sports, festivals, and fairs, and saves those live listings into the local catalog. Its configuration file is `~/.spotlight/config.json`.
 
 ### `community.py`
 
