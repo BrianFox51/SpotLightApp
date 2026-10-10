@@ -1,4 +1,4 @@
-"""Spotlight online helpers (no API keys): poster art, studio trailer clips and buy links from Apple's iTunes Search API (movies, TV, music)
+"""Spotlight online helpers (no API keys): artwork, video/audio previews and buy links from Apple's iTunes Search API (movies, TV, music)
 and the Steam store (games), plus cast / artist biographies and photos from Wikipedia. Results are cached on disk; fetch() and person()
 raise on network failure so the caller can simply retry next time."""
 import os, re, json, urllib.request, urllib.parse
@@ -42,9 +42,18 @@ def _itunes(media, entity, key, term, title, artist="", year="", attr=None):
     return _best(_json("https://itunes.apple.com/search?" + _q(**q))["results"], key, title, artist, year)
 
 
-def fetch(cat, title, sub, year, poster_dir, video_dir, slug, tmdb_key="", backdrop_dir=None, people_dir=None):
-    """Downloads poster + trailer clip (never overwriting files you added yourself). Returns metadata dict, {} if nothing matched."""
-    out, poster_url, poster_alt, clip_url, backdrop_url, credits, tm = {}, None, None, None, None, None, None
+def _artist_preview(media, entity, artist):
+    """Find one playable Apple preview credited to the requested artist."""
+    artist_key = _norm(artist)
+    if not artist_key:
+        return None
+    rows = _json("https://itunes.apple.com/search?" + _q(term=artist, media=media, entity=entity, limit=25, country="us"))["results"]
+    return next((row for row in rows if row.get("previewUrl") and artist_key in _norm(row.get("artistName", ""))), None)
+
+
+def fetch(cat, title, sub, year, poster_dir, video_dir, slug, tmdb_key="", backdrop_dir=None, people_dir=None, artist=""):
+    """Download artwork and available previews (never overwriting files added by the user)."""
+    out, poster_url, poster_alt, clip_url, audio_url, backdrop_url, credits, tm = {}, None, None, None, None, None, None, None
     if tmdb_key and cat in ("movies", "tv"):
         try: tm = tmdb_fetch(cat, title, year, tmdb_key)
         except urllib.error.HTTPError as e:
@@ -53,7 +62,9 @@ def fetch(cat, title, sub, year, poster_dir, video_dir, slug, tmdb_key="", backd
     if cat in ("movies", "tv", "music"):
         if cat == "movies": r = _itunes("movie", "movie", "trackName", title, title, "", year, "movieTerm") or _itunes("movie", "movie", "trackName", f"{title} {year}", title, "", year)
         elif cat == "tv": r = _itunes("tvShow", "tvSeason", "collectionName", title, title, "", "", "tvShowTerm")
-        else: r = _itunes("music", "song", "trackName", title, title, sub, "", "songTerm") or _itunes("music", "song", "trackName", f"{title} {sub}", title, sub)
+        else:
+            credited_artist = artist or sub
+            r = _itunes("music", "song", "trackName", f"{title} {credited_artist}", title, credited_artist, "", "songTerm") or _itunes("music", "song", "trackName", title, title, credited_artist)
         if r:
             poster_url = (r.get("artworkUrl100") or "").replace("100x100bb", "600x600bb") or None
             if cat != "music": clip_url = r.get("previewUrl")
@@ -67,8 +78,15 @@ def fetch(cat, title, sub, year, poster_dir, video_dir, slug, tmdb_key="", backd
                 out["buy_url"] = link
                 out["buy_label"] = ("Apple Music" if cat == "music" else "Apple TV") + (f" · Buy {buy}" if buy else "") + (f" · Rent {rent}" if rent else "")
         if cat == "music":
-            mv = _itunes("musicVideo", "musicVideo", "trackName", f"{title} {sub}", title, sub)
+            audio_url = (r or {}).get("previewUrl") or None
+            mv = _itunes("musicVideo", "musicVideo", "trackName", f"{title} {credited_artist}", title, credited_artist)
+            # For concert listings, the event title is rarely a song title. Fall back to
+            # a preview credited to the performing artist in that case.
+            mv = mv or _artist_preview("musicVideo", "musicVideo", credited_artist)
             clip_url = mv.get("previewUrl") if mv else None
+            if not audio_url:
+                song = _artist_preview("music", "song", credited_artist)
+                audio_url = song.get("previewUrl") if song else None
     elif cat == "games":
         items = _json("https://store.steampowered.com/api/storesearch/?" + _q(term=title, cc="us", l="en")).get("items", [])
         r = next((i for i in items if _norm(i.get("name", "")) == _norm(title)), None)
@@ -87,7 +105,13 @@ def fetch(cat, title, sub, year, poster_dir, video_dir, slug, tmdb_key="", backd
         poster_url, backdrop_url, credits = tm["poster"] or poster_url, tm["backdrop"], tm["credits"]
         for k in ("runtime", "rated", "genres", "tmdb_score", "tmdb_url", "tmdb_id", "yt_id"):
             if tm.get(k): out[k] = tm[k]
-    wk = wiki_find(title, (f"{sub} song",) if cat == "music" else _HINT.get(cat, ()))   # network errors propagate so the lookup is retried later
+    try:
+        wk = wiki_find(title, (f"{sub} song",) if cat == "music" else _HINT.get(cat, ()))
+    except Exception:
+        if cat != "music":
+            raise
+        # A missing biography should not prevent the music preview lookup/cache from completing.
+        wk = None
     if wk:
         out["about"], out["about_url"] = wk["about"][:2500], wk["url"]
         if not poster_url and wk["thumb"]: poster_url = wk["thumb"]
@@ -125,6 +149,15 @@ def fetch(cat, title, sub, year, poster_dir, video_dir, slug, tmdb_key="", backd
     if clip_url and not _has(video_dir, slug, (".mp4", ".mov", ".mkv", ".webm")):
         try: _save(clip_url, os.path.join(video_dir, slug + ".mp4"), 120)
         except Exception: pass
+    if cat == "music":
+        video_path = next((os.path.join(video_dir, slug + ext) for ext in (".mp4", ".mov", ".mkv", ".webm") if os.path.exists(os.path.join(video_dir, slug + ext))), "")
+        audio_path = os.path.join(video_dir, slug + ".audio.m4a")
+        if audio_url and not os.path.exists(audio_path):
+            try: _save(audio_url, audio_path, 120)
+            except Exception: pass
+        out["music_video"] = video_path
+        out["music_audio"] = audio_path if os.path.exists(audio_path) else ""
+        out["music_media_v1"] = True
     return out
 
 
@@ -175,6 +208,39 @@ def tmdb_fetch(cat, title, year, key):
     crew.sort(key=lambda c: _CREW_ORDER.index(c["role"]) if c["role"] in _CREW_ORDER else 99)
     out["credits"] = cast + crew[:16]
     return out
+
+
+def tmdb_catalog(key):
+    """Return the first page of current U.S. theatrical movies and on-air TV from TMDB."""
+    catalogs = {}
+    for cat, endpoint, genre_endpoint, title_key, date_key in (
+        ("movies", "/movie/now_playing", "/genre/movie/list", "title", "release_date"),
+        ("tv", "/tv/on_the_air", "/genre/tv/list", "name", "first_air_date"),
+    ):
+        genres = {genre["id"]: genre["name"] for genre in _tmdb(genre_endpoint, key, language="en-US").get("genres", [])}
+        params = {"language": "en-US", "page": 1}
+        if cat == "movies": params["region"] = "US"
+        else: params["timezone"] = "America/New_York"
+        rows = _tmdb(endpoint, key, **params).get("results", [])
+        items = []
+        for row in rows:
+            title = (row.get(title_key) or "").strip()
+            if not title:
+                continue
+            raw_genre = next((genres[gid] for gid in row.get("genre_ids", []) if gid in genres), "Other")
+            genre = {"Science Fiction": "Sci-Fi", "Action & Adventure": "Action", "Documentary": "Docs"}.get(raw_genre, raw_genre)
+            date = row.get(date_key) or ""
+            items.append({
+                "id": row.get("id"), "title": title,
+                "year": date[:4], "date": date,
+                "overview": row.get("overview") or "",
+                "score": round(float(row.get("vote_average") or 0) * 10, 1),
+                "genre": genre,
+                "poster": IMG + "w500" + row["poster_path"] if row.get("poster_path") else "",
+                "url": f"https://www.themoviedb.org/{'movie' if cat == 'movies' else 'tv'}/{row.get('id')}" if row.get("id") else "",
+            })
+        catalogs[cat] = items
+    return catalogs
 
 
 def wikidata_credits(title, year="", cat="movies"):

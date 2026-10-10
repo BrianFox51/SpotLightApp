@@ -1,7 +1,7 @@
 """Spotlight - Local Media Dashboard. Install required packages from requirements.txt."""
 import os, re, sys, json, math, time, queue, zlib, shutil, threading, subprocess, importlib.util, webbrowser, urllib.request, urllib.parse
 import tkinter as tk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, font as tkfont
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageEnhance, ImageOps, ImageFont, ImageTk
 import customtkinter as ctk
@@ -49,7 +49,7 @@ BG, PANEL, CARD, HOVER = "#0b0b11", "#12121a", "#1a1a26", "#28283e"
 NAV = [("music", "🎵", "Concerts & Music"), ("movies", "🎬", "Cinema Feeds"), ("tv", "📺", "TV Networks"), ("games", "🎮", "Gaming Hub"), ("sports", "🏆", "Sports & Events"), ("festivals", "🎪", "Festivals & Fairs")]
 ACC = {"music": (214, 64, 190), "movies": (226, 72, 58), "tv": (36, 182, 196), "games": (84, 214, 108), "sports": (255, 140, 40), "festivals": (150, 110, 255)}
 FXK = {"music": "music", "movies": "movies", "tv": "tv", "games": "games", "sports": "tv", "festivals": "music"}
-TAG = {"music": "Upcoming concerts & music events", "movies": "Now showing", "tv": "Streaming now", "games": "Playing now", "sports": "Upcoming events", "festivals": "Happening soon"}
+TAG = {"music": "Upcoming concerts & music events", "movies": "Now showing", "tv": "TV airing this week", "games": "Playing now", "sports": "Upcoming events", "festivals": "Happening soon"}
 UNIT = {"music": "event", "sports": "event", "festivals": "event"}
 GENRES = {"music": [("Pop", "🎤"), ("Hip-Hop", "🎧"), ("Rock", "🎸"), ("Electronic", "🎛️"), ("R&B", "💜"), ("Country", "🤠"), ("Latin", "💃"), ("Jazz", "🎷"), ("Other", "🎼")],
           "movies": [("Action", "💥"), ("Drama", "🎭"), ("Comedy", "😂"), ("Sci-Fi", "🚀"), ("Horror", "👻"), ("Thriller", "🔪"), ("Animation", "✏️"), ("Indie", "🎞️")],
@@ -84,6 +84,30 @@ def sub_of(it):
     for k in ("sub", "subtitle", "studio", "artist", "creator"):
         if g(it, k): return g(it, k)
     return ""
+
+def wrapped_height(root, text, size, width, bold=False):
+    """Estimate the height needed to show every wrapped line in a CTk label."""
+    scale = root._get_widget_scaling()
+    font = tkfont.Font(root=root, family="Segoe UI", size=-max(1, round(size * scale)), weight="bold" if bold else "normal")
+    measured_width = width * scale
+    line_width = 0
+    lines = 0
+    for paragraph in str(text or "").splitlines() or [""]:
+        if not paragraph.strip():
+            lines += 1
+            continue
+        for word in paragraph.split():
+            word_width = font.measure(word)
+            space_width = font.measure(" ") if line_width else 0
+            if line_width and line_width + space_width + word_width > measured_width:
+                lines += 1
+                line_width = word_width
+            else:
+                line_width += space_width + word_width
+        lines += 1
+        line_width = 0
+    return max(24, math.ceil(lines * (font.metrics("linespace") + 2 * scale) / scale) + 4)
+
 def slug(t): return re.sub(r"[^a-z0-9]+", "-", t.lower()).strip("-")
 def hexc(c, k=1.0): return "#%02x%02x%02x" % tuple(min(255, int(v * k)) for v in c)
 
@@ -196,11 +220,12 @@ class Stage(tk.Canvas):
         self.mode, self.gen, self.video, self.failed, self.q = mode, 0, None, False, queue.Queue(maxsize=2)
         self.kind, self.accent, self.cover, self.lines, self.dim = "movies", ACC["movies"], None, ("", ""), 1.0
         self.t0, self.photo, self.size, self.status = time.time(), None, (0, 0), ("", "#888888")
-        self.vinst = self.vp = self.vf = None; self.vlc_on = False; self.muted = True; self.still = self.on_click = self._sk = None
+        self.vinst = self.vp = self.vf = None; self.vlc_on = False; self.audio_only = False; self.muted = True; self.still = self.on_click = self._sk = None
         self.bind("<Button-1>", lambda e: self.on_click and self.on_click())
         self.after(50, self.tick)
     def play(self, video, kind, accent, cover=None, lines=("", ""), dim=1.0, still=None):
-        self.still, self._sk = still, None; self.gen += 1; self.failed = False; self.video = video if video and os.path.exists(video) else None
+        self.muted = True
+        self.still, self._sk = still, None; self.gen += 1; self.failed = False; self.audio_only = False; self.video = video if video and os.path.exists(video) else None
         self.kind, self.accent, self.cover, self.lines, self.dim = kind, accent, cover, lines, dim
         while not self.q.empty():
             try: self.q.get_nowait()
@@ -209,18 +234,28 @@ class Stage(tk.Canvas):
             if self.video and self.vlc_start(self.video): return
             self.vlc_stop()
         if self.video: threading.Thread(target=self.decode, args=(self.gen, self.video), daemon=True).start()
-    def vlc_start(self, path):
+    def play_audio(self, path, kind, accent, lines=("", ""), dim=1.0, still=None):
+        """Play a muted audio preview while keeping the generated waveform visible."""
+        self.play(None, kind, accent, None, lines, dim, still)
+        if self.mode == "theater" and path and os.path.exists(path):
+            self.vlc_start(path, audio_only=True)
+    def vlc_start(self, path, audio_only=False):
         """Optional: play with sound through VLC (needs python-vlc + VLC installed). Returns False so the silent built-in player is used instead."""
         try:
             import vlc
             if self.vinst is None: self.vinst = vlc.Instance("--quiet", "--no-video-title-show")
-            if self.vf is None: self.vf = tk.Frame(self, bg="black")
-            self.vf.place(x=0, y=0, relwidth=1, relheight=1); self.vf.update_idletasks()
+            self.audio_only = audio_only
+            if audio_only:
+                if self.vf is not None: self.vf.place_forget()
+            else:
+                if self.vf is None: self.vf = tk.Frame(self, bg="black")
+                self.vf.place(x=0, y=0, relwidth=1, relheight=1); self.vf.update_idletasks()
             if self.vp is None: self.vp = self.vinst.media_player_new()
             self.vp.stop()
-            if sys.platform.startswith("win"): self.vp.set_hwnd(self.vf.winfo_id())
-            elif sys.platform == "darwin": self.vp.set_nsobject(self.vf.winfo_id())
-            else: self.vp.set_xwindow(self.vf.winfo_id())
+            if not audio_only:
+                if sys.platform.startswith("win"): self.vp.set_hwnd(self.vf.winfo_id())
+                elif sys.platform == "darwin": self.vp.set_nsobject(self.vf.winfo_id())
+                else: self.vp.set_xwindow(self.vf.winfo_id())
             md = self.vinst.media_new(path); md.add_option(":input-repeat=65535"); self.vp.set_media(md); self.vp.audio_set_mute(self.muted); self.vp.play()
             self.after(600, lambda: self.vp and self.vp.audio_set_mute(self.muted)); self.vlc_on = True; return True
         except Exception:
@@ -255,7 +290,7 @@ class Stage(tk.Canvas):
         except Exception:
             if gen == self.gen: self.failed = True
     def tick(self):
-        if self.vlc_on: self.after(250, self.tick); return
+        if self.vlc_on and not self.audio_only: self.after(250, self.tick); return
         w, h = self.winfo_width(), self.winfo_height(); self.size = (w, h); im = None
         if w > 20 and h > 20:
             if self.video and not self.failed:
@@ -402,10 +437,11 @@ class App(ctk.CTk):
         ctk.CTkSwitch(bar, text="Auto-open trailer", variable=self.auto_var, command=lambda: events.save_cfg({**events.load_cfg(), "auto_trailer": self.auto_var.get()})).pack(side="right", padx=8)
         self.buy_btn = ctk.CTkButton(bar, text="", fg_color="#1E7A34", hover_color="#27a046", command=self.open_buy)
         self.trailer_btn = ctk.CTkButton(bar, text="▶  Play trailer", fg_color="#9b1c1c", hover_color="#c42a2a", command=self.play_trailer)
-        self.mute_btn = ctk.CTkButton(bar, text="🔇  Sound off", fg_color=CARD, hover_color=HOVER, command=self.toggle_sound)
+        self.mute_btn = ctk.CTkButton(bar, text="🔊  Unmute", fg_color=CARD, hover_color=HOVER, command=self.toggle_sound)
         self.title = ctk.CTkLabel(p, text="Pick a genre, then a title", font=("Segoe UI", 34, "bold"), anchor="w"); self.title.pack(fill="x", padx=20, pady=(14, 0))
         self.meta_lbl = ctk.CTkLabel(p, text="", font=("Segoe UI", 14), text_color="#9aa0b5", anchor="w"); self.meta_lbl.pack(fill="x", padx=20)
         self.desc = ctk.CTkLabel(p, text="", font=("Segoe UI", 16), text_color="#c8ccd8", justify="left", anchor="w", wraplength=800); self.desc.pack(fill="x", padx=20, pady=10)
+        self.about_label = None; self.event_detail_labels = []
         self.promo = self.make_promo(p); self.promo.pack(fill="x", padx=20, pady=10); self.detail = ctk.CTkFrame(p, fg_color="transparent")
         self.cast_row = self.section("👥  Cast & Crew"); self.ev_box = self.section("📍  Local Venues & Showtimes")
         self.about_box = self.section("📖  About"); nb = self.section("📝  Notes")
@@ -421,7 +457,25 @@ class App(ctk.CTk):
         if self._rs: self.after_cancel(self._rs)
         def go():
             iw = self.insp.winfo_width()
-            if iw > 200: self.theater.configure(height=140 if self.sel is None else int(min(max(iw * 0.42, 300), 500))); self.desc.configure(wraplength=max(300, iw - 80))
+            if iw > 200:
+                text_width = max(180, self.insp._reverse_widget_scaling(iw) - 40)
+                self.theater.configure(height=140 if self.sel is None else int(min(max(iw * 0.42, 300), 500)))
+                logical_width = self.insp._reverse_widget_scaling(iw)
+                title_size = max(20, min(34, logical_width // 22))
+                title_text = self.title.cget("text")
+                meta_text = self.meta_lbl.cget("text")
+                desc_text = self.desc.cget("text")
+                self.title.configure(font=("Segoe UI", title_size, "bold"), wraplength=text_width, justify="left",
+                                     height=wrapped_height(self.insp, title_text, title_size, text_width, True))
+                self.meta_lbl.configure(wraplength=text_width, justify="left", height=wrapped_height(self.insp, meta_text, 14, text_width))
+                self.desc.configure(wraplength=text_width, height=wrapped_height(self.insp, desc_text, 16, text_width))
+                if self.about_label is not None and self.about_label.winfo_exists():
+                    about_text = self.about_label.cget("text")
+                    self.about_label.configure(wraplength=text_width, height=wrapped_height(self.insp, about_text, 15, text_width))
+                for label in self.event_detail_labels:
+                    if label.winfo_exists():
+                        event_width = max(180, self.insp._reverse_widget_scaling(iw) - 390)
+                        label.configure(wraplength=event_width, height=wrapped_height(self.insp, label.cget("text"), 15, event_width))
         self._rs = self.after(150, go)
 
     def load_logos(self):
@@ -564,6 +618,9 @@ class App(ctk.CTk):
             for it in self.items: cnt[self.genre_of(it)] = cnt.get(self.genre_of(it), 0) + 1
             tiles = ([ ("All", "⭐", len(self.items)) ] if self.items else [])
             tiles.extend((n, ic, cnt.get(n, 0)) for n, ic in GENRES[self.cat] if cnt.get(n, 0))
+            known_genres = {name for name, _icon in GENRES[self.cat]}
+            icon = "🎬" if self.cat == "movies" else "📺"
+            tiles.extend((name, icon, count) for name, count in sorted(cnt.items()) if name not in known_genres)
         if not tiles:
             empty = "No events have been found in this section yet." if self.cat in UNIT else "No items have been saved in this section yet."
             ctk.CTkLabel(self.list, text=empty + "\nTry Spotlight Search above or sync events from the dashboard.",
@@ -600,8 +657,15 @@ class App(ctk.CTk):
             ctk.CTkLabel(row, text="", image=im).pack(side="left", padx=10, pady=8)
             col = ctk.CTkFrame(row, fg_color="transparent"); col.pack(side="left", fill="both", expand=True, pady=10)
             ctk.CTkLabel(col, text=f"#{start + n + 1}", font=("Segoe UI", 12, "bold"), text_color=hexc(ACC[self.cat]), anchor="w").pack(fill="x")
-            ctk.CTkLabel(col, text=g(it, "title"), font=("Segoe UI", 17, "bold"), anchor="w", justify="left", wraplength=190).pack(fill="x")
-            ctk.CTkLabel(col, text=f"{sub_of(it)} · {g(it, 'year')}".strip(" ·"), font=("Segoe UI", 13), text_color="#9aa0b5", anchor="w").pack(fill="x")
+            title_text = g(it, "title")
+            title_font = 17 if len(title_text) < 38 else 15 if len(title_text) < 62 else 13
+            subtitle_text = f"{sub_of(it)} · {g(it, 'year')}".strip(" ·")
+            title_height = wrapped_height(self.insp, title_text, title_font, 190, True)
+            subtitle_height = wrapped_height(self.insp, subtitle_text, 13, 190)
+            row_height = max(108, min(210, 38 + title_height + (subtitle_height if subtitle_text else 0) + 22))
+            row.configure(height=row_height)
+            ctk.CTkLabel(col, text=title_text, font=("Segoe UI", title_font, "bold"), anchor="w", justify="left", wraplength=190, height=title_height).pack(fill="x")
+            ctk.CTkLabel(col, text=subtitle_text, font=("Segoe UI", 13), text_color="#9aa0b5", anchor="w", justify="left", wraplength=190, height=subtitle_height).pack(fill="x")
             ctk.CTkLabel(row, text=f"{float(g(it, 'score', 0) or 0):.0f}", width=46, height=46, corner_radius=23, fg_color=hexc(ACC[self.cat], 0.6), font=("Segoe UI", 16, "bold")).pack(side="right", padx=10)
             bind_all(row, lambda e, n=n: self.select(n)); self.cards[n] = row
         if rows:
@@ -682,16 +746,20 @@ class App(ctk.CTk):
         self.cards, self.imgs = {}, []
         for index, item in enumerate(self.shown):
             category = item["_search_category"]; accent = ACC[category]
-            row = ctk.CTkFrame(self.list, fg_color=CARD, corner_radius=14, height=96); row.pack(fill="x", padx=4, pady=4); row.pack_propagate(False)
+            title_text = g(item, "title")
+            metadata = self.meta.get(category, title_text)
+            title_height = wrapped_height(self.insp, title_text, 15, 220, True)
+            subtitle = " · ".join(value for value in (metadata.get("music_artist") or sub_of(item), g(item, "year")) if value)
+            subtitle_height = wrapped_height(self.insp, subtitle, 12, 220)
+            row_height = max(96, min(180, 34 + title_height + (subtitle_height if subtitle else 0) + 18))
+            row = ctk.CTkFrame(self.list, fg_color=CARD, corner_radius=14, height=row_height); row.pack(fill="x", padx=4, pady=4); row.pack_propagate(False)
             image = ctk.CTkImage(art(g(item, "title"), accent, (104, 152)), size=(52, 76)); self.imgs.append(image)
             ctk.CTkLabel(row, text="", image=image).pack(side="left", padx=9, pady=7)
             details = ctk.CTkFrame(row, fg_color="transparent"); details.pack(side="left", fill="both", expand=True, pady=8)
             category_name = next((name for key, _icon, name in NAV if key == category), category.title())
             ctk.CTkLabel(details, text=category_name.upper(), font=("Segoe UI", 10, "bold"), text_color=hexc(accent), anchor="w").pack(fill="x")
-            ctk.CTkLabel(details, text=g(item, "title"), font=("Segoe UI", 15, "bold"), anchor="w", justify="left", wraplength=220).pack(fill="x")
-            metadata = self.meta.get(category, g(item, "title"))
-            subtitle = " · ".join(value for value in (metadata.get("music_artist") or sub_of(item), g(item, "year")) if value)
-            ctk.CTkLabel(details, text=subtitle, font=("Segoe UI", 12), text_color="#9aa0b5", anchor="w").pack(fill="x")
+            ctk.CTkLabel(details, text=title_text, font=("Segoe UI", 15, "bold"), anchor="w", justify="left", wraplength=220, height=title_height).pack(fill="x")
+            ctk.CTkLabel(details, text=subtitle, font=("Segoe UI", 12), text_color="#9aa0b5", anchor="w", justify="left", wraplength=220, height=subtitle_height).pack(fill="x")
             bind_all(row, lambda _event, number=index: self.select(number)); self.cards[index] = row
         controls = ctk.CTkFrame(self.list, fg_color="transparent"); controls.pack(fill="x", padx=4, pady=(12, 18))
         ctk.CTkButton(controls, text="‹  Previous", width=110, fg_color=CARD, hover_color=HOVER, state="normal" if self.page > 0 else "disabled",
@@ -729,6 +797,13 @@ class App(ctk.CTk):
                 path = os.path.join(folder, slug(title) + "." + ext)
                 if os.path.exists(path): return path
         return None
+    def find_audio(self, title):
+        for stem in (slug(title) + ".audio", slug(title)):
+            for ext in (".m4a", ".mp3", ".aac", ".wav", ".flac", ".ogg"):
+                for folder in (VIDEOS, LEGACY_VIDEOS):
+                    path = os.path.join(folder, stem + ext)
+                    if os.path.exists(path): return path
+        return None
     def avatar(self, name, size=96):
         pp = os.path.join(PEOPLE, slug(name) + ".jpg"); acc = tuple(70 + (zlib.crc32(name.encode()) >> s) % 150 for s in (0, 8, 16)); S = size * 4
         src = ImageOps.fit(Image.open(pp).convert("RGB"), (S, S), centering=(0.5, 0.2)) if os.path.exists(pp) else art(name, acc, (S, S), True)
@@ -753,14 +828,26 @@ class App(ctk.CTk):
     def render_detail(self, it):
         cat = self.sel_cat; acc = ACC[cat]; title = g(it, "title"); m = self.meta.get(cat, title); city = (self.gate.user or {}).get("city", "") if hasattr(self, "gate") else ""
         vid = m.get("video") if m.get("video") and os.path.exists(m["video"]) else self.find_video(title)
+        if cat == "music":
+            vid = m.get("music_video") if m.get("music_video") and os.path.exists(m["music_video"]) else vid
+            audio = m.get("music_audio") if m.get("music_audio") and os.path.exists(m["music_audio"]) else self.find_audio(title)
+        else:
+            audio = None
         bp = os.path.join(BACKDROPS, slug(title) + ".jpg"); still = Image.open(bp).convert("RGB") if os.path.exists(bp) and not vid else None
-        self.theater.on_click = self.play_trailer if m.get("yt_id") else None; self.theater.configure(cursor="hand2" if m.get("yt_id") else "")
-        self.theater.play(vid, "wave" if cat == "music" else FXK[cat], acc, None, (title, ("TRAILER · muted loop" if vid else ("▶ click to play the trailer" if m.get("yt_id") else ("WAVEFORM" if cat == "music" else "Trailer loading…"))) + f"  ·  {sub_of(it)}"), still=still)
+        if cat == "music" and vid:
+            self.theater.play(vid, "wave", acc, None, (title, f"MUSIC VIDEO PREVIEW · muted · {sub_of(it)}"), still=None)
+        elif cat == "music" and audio:
+            self.theater.play_audio(audio, "wave", acc, (title, f"AUDIO PREVIEW · muted · {sub_of(it)}"))
+        else:
+            self.theater.play(vid, "wave" if cat == "music" else FXK[cat], acc, None,
+                              (title, ("TRAILER · muted loop" if vid else ("▶ click to play the trailer" if m.get("yt_id") else ("WAVEFORM" if cat == "music" else "Trailer loading…"))) + f"  ·  {sub_of(it)}"), still=still)
+        self.theater.on_click = self.toggle_sound if cat == "music" and self.theater.vlc_on else self.play_trailer if m.get("yt_id") else None
+        self.theater.configure(cursor="hand2" if self.theater.on_click else "")
         ps = (300, 300) if cat == "music" else (250, 375); self.poster.configure(image=ctk.CTkImage(art(title, acc, (ps[0] * 2, ps[1] * 2)), size=ps)); self.poster.pack(side="left", anchor="n", padx=(0, 12), before=self.theater)
         for b in (self.find_btn, self.trailer_btn, self.mute_btn, self.buy_btn): b.pack_forget()
         if m.get("yt_id"): self.trailer_btn.pack(side="left", padx=8)
         else: self.find_btn.pack(side="left", padx=8)
-        if self.theater.vlc_on: self.mute_btn.configure(text="🔇  Sound off" if self.theater.muted else "🔊  Sound on"); self.mute_btn.pack(side="left", padx=8)
+        if self.theater.vlc_on: self.mute_btn.configure(text="🔊  Unmute" if self.theater.muted else "🔇  Mute"); self.mute_btn.pack(side="left", padx=8)
         if m.get("buy_url"): self.buy_btn.configure(text="🛒  " + m.get("buy_label", "Buy / Rent")); self.buy_btn.pack(side="left", padx=8)
         extra = "   •   ".join(x for x in (m.get("rated"), m.get("runtime")) if x)
         lead = ("🤝 Community listing   •   " if m.get("community") else "") + f"📅 {g(it, 'recent_shown')}" if cat in UNIT else f"★ {g(it, 'score')}   •   First: {g(it, 'first_shown')}   •   Latest: {g(it, 'recent_shown')}"
@@ -769,19 +856,26 @@ class App(ctk.CTk):
         self.desc.configure(text=g(it, "description")); self.render_cast(it)
         for w in self.about_box.winfo_children(): w.destroy()
         about = m.get("about")
-        ctk.CTkLabel(self.about_box, text=about or "Extended details load from the web the first time you open a title (needs internet).", font=("Segoe UI", 15), text_color="#cfd3e0" if about else "#888",
-                     justify="left", anchor="w", wraplength=max(400, self.insp.winfo_width() - 120)).pack(fill="x")
+        detail_width = max(180, self.insp._reverse_widget_scaling(self.insp.winfo_width()) - 40)
+        self.about_label = ctk.CTkLabel(self.about_box, text=about or "Extended details load from the web the first time you open a title (needs internet).", font=("Segoe UI", 15), text_color="#cfd3e0" if about else "#888",
+                                         justify="left", anchor="w", wraplength=detail_width)
+        self.about_label.pack(fill="x")
         if m.get("about_url"): ctk.CTkButton(self.about_box, text="Read more on Wikipedia", fg_color=CARD, hover_color=HOVER, command=lambda u=m["about_url"]: webbrowser.open(u)).pack(anchor="w", pady=6)
         if m.get("tmdb_url"):
             ctk.CTkButton(self.about_box, text="Full cast, crew & details on TMDB", fg_color=CARD, hover_color=HOVER, command=lambda u=m["tmdb_url"]: webbrowser.open(u)).pack(anchor="w", pady=2)
             ctk.CTkLabel(self.about_box, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#777", font=("Segoe UI", 11)).pack(anchor="w")
         for w in self.ev_box.winfo_children(): w.destroy()
+        self.event_detail_labels = []
         evs = database.load_details(g(it, "id"))[1]
         if not evs:
             ctk.CTkLabel(self.ev_box, text="No saved dates yet. Search ticket vendors:", text_color="#888").pack(anchor="w"); self.vendor_row(self.ev_box, title, cat)
         for ev in evs:
             r = ctk.CTkFrame(self.ev_box, fg_color=CARD, corner_radius=12); r.pack(fill="x", pady=4)
-            ctk.CTkLabel(r, text=f"📍  {g(ev, 'venue_name')}\n{g(ev, 'event_time')}  ·  {g(ev, 'location_details')}", font=("Segoe UI", 15), justify="left", anchor="w").pack(side="left", padx=14, pady=10)
+            event_width = max(180, self.insp._reverse_widget_scaling(self.insp.winfo_width()) - 390)
+            event_text = f"📍  {g(ev, 'venue_name')}\n{g(ev, 'event_time')}  ·  {g(ev, 'location_details')}"
+            event_label = ctk.CTkLabel(r, text=event_text, font=("Segoe UI", 15), justify="left", anchor="w", wraplength=event_width,
+                                       height=wrapped_height(self.insp, event_text, 15, event_width))
+            event_label.pack(side="left", fill="x", expand=True, padx=14, pady=10); self.event_detail_labels.append(event_label)
             right = ctk.CTkFrame(r, fg_color="transparent"); right.pack(side="right", padx=10); real = g(ev, "purchase_url")
             if real: ctk.CTkButton(right, text="🎟  Reserve / Buy Tickets", fg_color="#1E7A34", hover_color="#27a046", command=lambda u=real: webbrowser.open(u)).pack(side="left", padx=3)
             for name, url in events.vendor_links(f"{title} {g(ev, 'venue_name')}" if cat != "sports" else title, cat)[: (2 if real else 3)]:
@@ -790,12 +884,12 @@ class App(ctk.CTk):
             self.tmdb_notes_mark.pack(fill="x", pady=(0, 6), before=self.notes)
         else:
             self.tmdb_notes_mark.pack_forget()
-        self.notes.delete("1.0", "end"); self.notes.insert("1.0", g(it, "user_notes"))
+        self.notes.delete("1.0", "end"); self.notes.insert("1.0", g(it, "user_notes")); self.on_resize()
     def vendor_row(self, parent, query, cat):
         r = ctk.CTkFrame(parent, fg_color="transparent"); r.pack(anchor="w", pady=4)
         for name, url in events.vendor_links(query, cat): ctk.CTkButton(r, text=f"🎟  {name}", width=120, fg_color="#1E7A34", hover_color="#27a046", command=lambda u=url: webbrowser.open(u)).pack(side="left", padx=4)
     def toggle_sound(self):
-        self.mute_btn.configure(text="🔇  Sound off" if self.theater.toggle_mute() else "🔊  Sound on")
+        self.mute_btn.configure(text="🔊  Unmute" if self.theater.toggle_mute() else "🔇  Mute")
     def play_trailer(self):
         """YouTube's own player in its own window (needs pywebview); otherwise the video opens in your browser."""
         if not self.sel: return
@@ -829,14 +923,15 @@ class App(ctk.CTk):
     def fetch_online(self, it):
         """Background: poster, backdrop, trailer, buy link, About text and the FULL cast/crew (with photos). Results return through self.uiq."""
         cat, title, sub, year, iid = self.sel_cat, g(it, "title"), sub_of(it), str(g(it, "year")), g(it, "id"); mm = self.meta.get(cat, title); key = events.load_cfg().get("tmdb_key", "")
-        need = (not mm.get("online_v3") and time.time() - mm.get("online_try", 0) > 86400 * 3) or bool(key and cat in ("movies", "tv") and not mm.get("tmdb_id") and time.time() - mm.get("tmdb_try", 0) > 3600)
+        music_media_due = cat == "music" and not mm.get("music_media_v1") and time.time() - mm.get("music_media_try", 0) > 86400
+        need = (not mm.get("online_v3") and time.time() - mm.get("online_try", 0) > 86400 * 3) or bool(key and cat in ("movies", "tv") and not mm.get("tmdb_id") and time.time() - mm.get("tmdb_try", 0) > 3600) or music_media_due
         rows = database.load_details(iid)[0][:8]
         fresh = [g(x, "name") for x in rows if not os.path.exists(os.path.join(PEOPLE, slug(g(x, "name")) + ".jpg")) and online.cached_person(PEOPLE, g(x, "name")) is None]
         if not need and not fresh: return
         def work():
             res, ppl = None, False
             try:
-                if need: res = online.fetch(cat, title, sub, year, POSTERS, VIDEOS, slug(title), key, BACKDROPS, PEOPLE)
+                if need: res = online.fetch(cat, title, sub, year, POSTERS, VIDEOS, slug(title), key, BACKDROPS, PEOPLE, artist=mm.get("music_artist", "") if cat == "music" else "")
             except Exception: pass
             for nm in ([] if res and res.get("credits") else fresh):
                 try: online.person(PEOPLE, nm); ppl = True
@@ -849,6 +944,8 @@ class App(ctk.CTk):
             if credits: database.add_credits(iid, credits)
             self.meta.put(cat, title, **({"online_v3": True, **res} if res else {"online_try": time.time()}))
             if events.load_cfg().get("tmdb_key") and cat in ("movies", "tv") and not res.get("tmdb_id"): self.meta.put(cat, title, tmdb_try=time.time())
+        else:
+            self.meta.put(cat, title, online_try=time.time(), music_media_try=time.time())
         for k in [k for k in _ART if k[0] == title]: del _ART[k]
         if self.sel is not None and self.sel_cat == cat and g(self.sel, "title") == title:
             if res: self.render_detail(self.sel)
@@ -900,6 +997,51 @@ class App(ctk.CTk):
         if self.cat == "music" and self.sel is None:
             self.items = list(database.load_local_catalog("music"))
         self.gate.show_dashboard(f"Done: {res['music']} concerts/music events, {res['sports']} sports, and {res['festivals']} festivals and fairs found {search_label}.")
+    def sync_tmdb(self, say, token):
+        """Refresh the movie and on-air TV catalogs from TMDB in the background."""
+        if not token:
+            return say("Paste your TMDB API Read Access Token, then choose Update All.")
+        say("Updating currently playing movies and on-air TV from TMDB…")
+        def work():
+            try:
+                catalogs = online.tmdb_catalog(token)
+            except urllib.error.HTTPError as exc:
+                message = "TMDB rejected the token. Check it in the TMDB key field and try again." if exc.code in (401, 403) else f"TMDB update failed (HTTP {exc.code})."
+                return self.uiq.put((say, (message,)))
+            except Exception as exc:
+                return self.uiq.put((say, (f"TMDB update failed: {exc}",)))
+            for cat in ("movies", "tv"):
+                for result in catalogs.get(cat, []):
+                    poster_path = os.path.join(POSTERS, slug(result["title"]) + ".jpg")
+                    if result["poster"] and not os.path.exists(poster_path):
+                        try: online._save(result["poster"], poster_path)
+                        except Exception: pass
+            self.uiq.put((self.apply_tmdb, (catalogs, say)))
+        threading.Thread(target=work, daemon=True).start()
+    def apply_tmdb(self, catalogs, say=None):
+        now = int(time.time()); added = {"movies": 0, "tv": 0}; updated = {"movies": 0, "tv": 0}
+        for cat in ("movies", "tv"):
+            existing = {g(item, "title").casefold(): item for item in database.load_local_catalog(cat)}
+            for result in catalogs.get(cat, []):
+                title = result["title"]
+                old = existing.get(title.casefold())
+                sub = g(old, "sub") or ("Now playing" if cat == "movies" else "Currently airing")
+                database.save_media_item(cat, {
+                    "title": title, "sub": sub, "year": result["year"], "url": result["url"],
+                    "score": result["score"], "desc": result["overview"],
+                    "first_shown": result["date"] or ("Now playing" if cat == "movies" else "Currently airing"),
+                    "recent_shown": "Now playing" if cat == "movies" else "Currently airing", "srcs": ["TMDB"],
+                })
+                if old: updated[cat] += 1
+                else: added[cat] += 1
+                metadata = self.meta.d.setdefault(f"{cat}|{title}", {})
+                metadata.update({"genre": result["genre"], "tmdb_id": result["id"], "tmdb_url": result["url"], "tmdb_catalog": True, "tmdb_catalog_updated": now})
+                for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
+        self.meta.save()
+        movie_total = len(database.load_local_catalog("movies")); tv_total = len(database.load_local_catalog("tv"))
+        details = f"TMDB updated: {added['movies']} new movies, {updated['movies']} refreshed; {added['tv']} new TV shows, {updated['tv']} refreshed."
+        if say: say(f"{details} Current catalog totals: {movie_total} movies, {tv_total} TV shows.")
+        if self.gate.winfo_ismapped(): self.gate.show_dashboard(f"{details} Full cast, trailers, and extended details load when you open a title.")
     def open_buy(self):
         if self.sel: url = self.meta.get(self.sel_cat, g(self.sel, "title")).get("buy_url"); url and webbrowser.open(url)
     def close_bio(self):

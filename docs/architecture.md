@@ -25,7 +25,7 @@ Implements the sign-in/create-account/guest screen and the dashboard shown after
 
 ### `online.py`
 
-Contains HTTP helpers and provider integrations. Its code can retrieve title/artist information and artwork from Apple search, Steam, TMDB, Wikidata, and Wikipedia. It no longer scrapes YouTube's search page. `main.py` uses trailer IDs supplied by TMDB when available; otherwise its YouTube search action opens a normal search page in the user's browser. Person biographies use Wikipedia.
+Contains HTTP helpers and provider integrations. Its code can retrieve title/artist information and artwork from Apple search, Steam, TMDB, Wikidata, and Wikipedia. The dashboard's TMDB **Update All** imports the current U.S. theatrical movie list and the next seven days of on-air TV listings; selecting a title loads its extended TMDB details. For music, Apple song and music-video previews are cached locally; the detail screen chooses a video preview first, otherwise an audio preview over the animated waveform. Preview playback starts muted and the sound control can unmute it when VLC is available. Long detail text wraps and grows with the window, while only long result cards expand. It no longer scrapes YouTube's search page. `main.py` uses trailer IDs supplied by TMDB when available; otherwise its YouTube search action opens a normal search page in the user's browser. Person biographies use Wikipedia.
 
 ### `events.py`
 

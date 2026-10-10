@@ -70,7 +70,8 @@ Official references:
 
 ## Other active sources
 
-- Apple Search/iTunes endpoints and Steam store endpoints are used by `online.py` for product metadata, artwork, preview clips, and purchase links.
+- Apple Search/iTunes endpoints and Steam store endpoints are used by `online.py` for product metadata, artwork, preview clips, and purchase links. Music previews use a matching music-video preview when available; otherwise a song preview plays over the waveform. These are previews, not full-track playback. The app caches preview media in the user's `%USERPROFILE%\\.spotlight\\media\\videos` folder. Starting muted and changing the sound requires VLC playback support from `requirements-optional.txt` plus the VLC desktop application.
+- The dashboard's **Update All** action uses the TMDB Read Access Token to load the first page of U.S. movies currently in theaters and TV shows airing in the next seven days. It saves title, overview, rating, genre, poster, and TMDB link to the local catalog; opening a title loads extended details and cast.
 - Wikipedia/Wikidata are used for biographies, article summaries, and fallback credits.
 - ZIP-to-location lookup uses Zippopotam.us. The startup connection indicator checks Google connectivity.
 - The community feed is a user-configured JSON URL; the curator tool can write `events.json` for hosting, such as from a GitHub raw-content URL.
