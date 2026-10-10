@@ -26,6 +26,17 @@ def load_logo(base):
 def trim_logo(img): return img.crop(LOGO_BBOX) if img is not None else None
 
 
+def load_tmdb_logo(base, filename):
+    """Load an owner-supplied TMDB PNG and trim transparent padding for UI display."""
+    path = os.path.join(base, "media", "tmdb", filename)
+    try:
+        image = Image.open(path).convert("RGBA")
+        bounds = image.getchannel("A").getbbox()
+        return image.crop(bounds) if bounds else None
+    except (OSError, ValueError):
+        return None
+
+
 def find_banner(base):
     for d in (base, os.path.join(base, "media"), os.path.join(base, "assets")):
         for pat in ("Mythic_Mask_Works*", "mythic*mask*banner*"):
@@ -47,30 +58,41 @@ class Gate(ctk.CTkFrame):
     def __init__(s, app, base):
         super().__init__(app, fg_color=BG, corner_radius=0)
         s.app, s.user, s.imgs, s.banner, s.logo = app, None, [], find_banner(base), trim_logo(load_logo(base))
+        s.tmdb_footer_logo = load_tmdb_logo(base, "tmdb_footer.png")
         s.place(x=0, y=0, relwidth=1, relheight=1); s.show_login()
 
     def clear(s):
         for w in s.winfo_children(): w.destroy()
         s.imgs.clear(); s.place(x=0, y=0, relwidth=1, relheight=1); s.lift()
+        # Keep the whole gate usable on high-DPI screens with limited vertical space.
+        s.page = ctk.CTkScrollableFrame(s, fg_color=BG, corner_radius=0)
+        s.page.pack(fill="both", expand=True)
 
     def logo_label(s, w):
-        if s.logo is None: ctk.CTkLabel(s, text="SPOTLIGHT", font=("Segoe UI", 40, "bold")).pack(pady=(24, 4)); return
-        ci = ctk.CTkImage(s.logo, size=(w, int(w * s.logo.height / s.logo.width))); s.imgs.append(ci); ctk.CTkLabel(s, text="", image=ci).pack(pady=(10, 0))
+        if s.logo is None: ctk.CTkLabel(s.page, text="SPOTLIGHT", font=("Segoe UI", 40, "bold")).pack(pady=(24, 4)); return
+        ci = ctk.CTkImage(s.logo, size=(w, int(w * s.logo.height / s.logo.width))); s.imgs.append(ci); ctk.CTkLabel(s.page, text="", image=ci).pack(pady=(10, 0))
 
     def header(s):
         s.logo_label(270)
+
+    def sponsor_footer(s, parent):
         if s.banner:
             im = Image.open(s.banner).convert("RGB"); w = 300; h = int(w * im.height / im.width)
-            ci = ctk.CTkImage(im, size=(w, h)); s.imgs.append(ci); ctk.CTkLabel(s, text="", image=ci).pack(pady=(8, 0))
+            ci = ctk.CTkImage(im, size=(w, h)); s.imgs.append(ci); ctk.CTkLabel(parent, text="", image=ci).pack(pady=(18, 0))
         else:
-            ctk.CTkLabel(s, text="MYTHIC MASK WORKS", font=("Segoe UI", 20, "bold"), text_color=GOLD).pack(pady=(8, 0))
-        ctk.CTkButton(s, text="mythicmaskworks.com   ·   free app", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
-                      font=("Segoe UI", 14, "bold"), command=lambda: webbrowser.open(SITE)).pack()
+            ctk.CTkLabel(parent, text="MYTHIC MASK WORKS", font=("Segoe UI", 20, "bold"), text_color=GOLD).pack(pady=(18, 0))
+        ctk.CTkButton(parent, text="mythicmaskworks.com   ·   free app", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
+                      font=("Segoe UI", 14, "bold"), command=lambda: webbrowser.open(SITE)).pack(pady=(2, 18))
+        if s.tmdb_footer_logo is not None:
+            width = 250
+            image = ctk.CTkImage(s.tmdb_footer_logo, size=(width, max(1, round(width * s.tmdb_footer_logo.height / s.tmdb_footer_logo.width))))
+            s.imgs.append(image)
+            ctk.CTkLabel(parent, text="", image=image).pack(pady=(0, 16))
 
     # ---------- sign in / create account / guest ----------
     def show_login(s):
-        s.clear(); s.header()
-        tabs = ctk.CTkTabview(s, width=460, height=250, fg_color=PANEL); tabs.pack(pady=8)
+        s.clear(); s.header(); p=s.page
+        tabs = ctk.CTkTabview(p, width=460, height=250, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Account")
         u1 = ctk.CTkEntry(si, placeholder_text="Username", width=320); u1.pack(pady=(14, 6))
         p1 = ctk.CTkEntry(si, placeholder_text="Password", show="•", width=320); p1.pack(pady=6)
@@ -80,8 +102,9 @@ class Gate(ctk.CTkFrame):
         p2 = ctk.CTkEntry(su, placeholder_text="Password (6+ characters)", show="•", width=320); p2.pack(pady=4)
         z2 = ctk.CTkEntry(su, placeholder_text="ZIP code (finds events near you)", width=320); z2.pack(pady=4)
         ctk.CTkButton(su, text="Create Account", width=320, command=lambda: s.do_signup(u2.get(), p2.get(), z2.get())).pack(pady=10)
-        s.err = ctk.CTkLabel(s, text="", text_color="#ff6b6b", font=("Segoe UI", 13)); s.err.pack()
-        ctk.CTkButton(s, text="Continue as guest", fg_color=CARD, hover_color=HOVER, command=s.guest).pack(pady=6)
+        s.err = ctk.CTkLabel(p, text="", text_color="#ff6b6b", font=("Segoe UI", 13)); s.err.pack()
+        ctk.CTkButton(p, text="Continue as guest", fg_color=CARD, hover_color=HOVER, command=s.guest).pack(pady=6)
+        s.sponsor_footer(p)
 
     def do_login(s, u, p):
         user = database.verify_user(u, p) if u.strip() and p else None
@@ -107,23 +130,23 @@ class Gate(ctk.CTkFrame):
         except Exception: pass
 
     def show_dashboard(s, status=""):
-        s.clear()
+        s.clear(); p=s.page
         u = s.user or {"display_name": "Guest", "city": "", "state": ""}; city, state = u.get("city") or "", u.get("state") or ""
         st = database.dashboard_stats(city, state); c = st["cats"]
         s.logo_label(190)
-        ctk.CTkLabel(s, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
+        ctk.CTkLabel(p, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
         where = ", ".join(x for x in (city, state) if x) or "No location set: create an account with a ZIP code to see what's near you"
-        ctk.CTkLabel(s, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14)).pack(pady=(2, 22))
+        ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14)).pack(pady=(2, 22))
         cards = [("Titles found", st["total"]), ("🎵 Music", c.get("music", 0)), ("🎬 Movies", c.get("movies", 0)), ("📺 TV", c.get("tv", 0)),
                  ("🎮 Games", c.get("games", 0)), ("🏆 Sports", c.get("sports", 0)), ("🎪 Festivals", c.get("festivals", 0)), ("📍 Local events saved", st["events"]),
                  (f"Titles near {city}" if city else "Titles near you", st["near_city"] if city else "-"),
                  (f"Titles in {state}" if state else "Titles in your state", st["near_state"] if state else "-")]
-        grid = ctk.CTkFrame(s, fg_color="transparent"); grid.pack()
+        grid = ctk.CTkFrame(p, fg_color="transparent"); grid.pack()
         for i, (label, val) in enumerate(cards):
             f = ctk.CTkFrame(grid, width=200, height=110, fg_color=CARD, corner_radius=16); f.grid(row=i // 5, column=i % 5, padx=8, pady=8); f.pack_propagate(False)
             ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD).pack(pady=(16, 0))
             ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5").pack()
-        cfg = events.load_cfg(); live = ctk.CTkFrame(s, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
+        cfg = events.load_cfg(); live = ctk.CTkFrame(p, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
         ctk.CTkLabel(live, text="🌐  Live events: sports, festivals and music dates (Ticketmaster)", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
         area_row = ctk.CTkFrame(live, fg_color="transparent"); area_row.pack(anchor="w", padx=14, pady=(6, 2))
         ctk.CTkLabel(area_row, text="Search area", text_color="#9aa0b5").pack(side="left", padx=(0, 8))
@@ -145,7 +168,8 @@ class Gate(ctk.CTkFrame):
         ctk.CTkButton(lr, text="Get a free key", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
                       command=lambda: webbrowser.open("https://developer.ticketmaster.com/products-and-docs/apis/getting-started/")).pack(side="left")
         s.status = ctk.CTkLabel(live, text=status or "Keys stay on this PC. Movie/TV data: TMDB (this product uses the TMDB API but is not endorsed or certified by TMDB).", text_color="#9aa0b5", font=("Segoe UI", 12)); s.status.pack(pady=(0, 10))
-        row = ctk.CTkFrame(s, fg_color="transparent"); row.pack(pady=18)
+        row = ctk.CTkFrame(p, fg_color="transparent"); row.pack(pady=18)
+        s.sponsor_footer(p)
         ctk.CTkButton(row, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.place_forget).pack(side="left", padx=8)
         ctk.CTkButton(row, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote).pack(side="left", padx=8)
         ctk.CTkButton(row, text="🔄 Community", width=120, height=46, fg_color=CARD, hover_color=HOVER, command=lambda: s.app.sync_community(s.say)).pack(side="left", padx=8)

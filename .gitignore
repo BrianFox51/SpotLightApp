@@ -11,6 +11,10 @@ __pycache__/
 /media/**
 !/media/
 !/media/spotlight.ico
+# Keep the owner-supplied TMDB vector marks as source assets.
+!/media/tmdb/
+!/media/tmdb/*.svg
+!/media/tmdb/*.png
 /spotlight_meta.json
 /trailer.mp4
 *.part

@@ -195,6 +195,7 @@ def fx(kind, w, h, t, accent, cover=None):
 
 class Stage(tk.Canvas):
     logo = None   # wordmark from the official logo, set by App.load_logos
+    tmdb_cinema_logo = None
     """Looping video (muted) or generated animation. One decoder thread at a time; switching items cancels the old one."""
     def __init__(self, master, mode, height):
         super().__init__(master, height=height, highlightthickness=0, bg="#08080c")
@@ -281,10 +282,15 @@ class Stage(tk.Canvas):
             f = ("Segoe UI", size, "bold" if bold else "normal")
             self.create_text(x + 2, y + 2, text=s, font=f, fill="#000000", anchor=anc); self.create_text(x, y, text=s, font=f, fill=col, anchor=anc)
         if self.mode == "hero":
-            (self.create_image(22, 8, image=Stage.logo, anchor="nw") if Stage.logo else txt(24, 12, "SPOTLIGHT", 15)); txt(w - 20, 14, self.status[0], 11, self.status[1], "ne", False)
-            txt(24, h - 62, self.lines[0], 30); txt(26, h - 16, self.lines[1], 12, "#dddddd", "sw", False)
+            (self.create_image(22, 8, image=Stage.logo, anchor="nw") if Stage.logo else txt(24, 12, "SPOTLIGHT", 15)); txt(w - 20, 16, self.status[0], 22, self.status[1], "ne", True)
+            if self.lines[0].upper() in {"CINEMA FEEDS", "TV NETWORKS"}:
+                if Stage.tmdb_cinema_logo:
+                    self.create_image(22, 48, image=Stage.tmdb_cinema_logo, anchor="nw")
+                txt(24, h - 72, self.lines[0], 26); txt(26, h - 8, self.lines[1], 18, "#f3f4f8", "sw", False)
+            else:
+                txt(24, h - 78, self.lines[0], 30); txt(26, h - 8, self.lines[1], 18, "#f3f4f8", "sw", False)
         else:
-            n = len(self.lines[0]); txt(24, h - 74, self.lines[0], 24 if n <= 22 else 18 if n <= 34 else 14); txt(26, h - 16, self.lines[1], 12, "#dddddd", "sw", False)
+            n = len(self.lines[0]); txt(24, h - 74, self.lines[0], 24 if n <= 22 else 18 if n <= 34 else 14); txt(26, h - 16, self.lines[1], 18, "#f3f4f8", "sw", False)
 
 class Tip:
     """Hover tooltip drawn as a plain label inside the main window (no extra OS windows, so no blank !toplevel boxes)."""
@@ -341,15 +347,17 @@ class App(ctk.CTk):
     def build(self):
         self.hero = Stage(self, "hero", 150); self.hero.pack(fill="x")
         body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0); body.pack(fill="both", expand=True)
-        rail = ctk.CTkFrame(body, width=84, fg_color=PANEL, corner_radius=0); rail.pack(side="left", fill="y"); rail.pack_propagate(False)
+        rail = ctk.CTkFrame(body, width=156, fg_color=PANEL, corner_radius=0); rail.pack(side="left", fill="y"); rail.pack_propagate(False)
         self.navbtn = {}
-        hb = ctk.CTkButton(rail, text="🏠", width=60, height=60, corner_radius=16, font=("Segoe UI Emoji", 28), fg_color="transparent", hover_color=HOVER, command=lambda: self.gate.show_dashboard())
-        hb.pack(pady=(18, 4), padx=12); Tip(hb, "Dashboard")
+        hb = ctk.CTkButton(rail, text="🏠", width=60, height=52, corner_radius=14, font=("Segoe UI Emoji", 25), fg_color="transparent", hover_color=HOVER, command=lambda: self.gate.show_dashboard())
+        hb.pack(pady=(10, 2), padx=12); Tip(hb, "Dashboard")
         for key, ico, name in NAV:
-            b = ctk.CTkButton(rail, text=ico, width=60, height=60, corner_radius=16, font=("Segoe UI Emoji", 28), fg_color="transparent", hover_color=HOVER, command=lambda k=key: self.click_cat(k))
-            b.pack(pady=(18, 4), padx=12); self.navbtn[key] = b; b.bind("<Enter>", lambda e, k=key: self.hover_open(k), add="+"); b.bind("<Leave>", self.hover_leave, add="+")
-        pb = ctk.CTkButton(rail, text="📣", width=60, height=60, corner_radius=16, font=("Segoe UI Emoji", 28), fg_color="transparent", hover_color=HOVER, command=self.open_promote)
-        pb.pack(pady=(18, 4), padx=12); Tip(pb, "Promote your event")
+            b = ctk.CTkButton(rail, text=ico, width=60, height=52, corner_radius=14, font=("Segoe UI Emoji", 25), fg_color="transparent", hover_color=HOVER, command=lambda k=key: self.click_cat(k))
+            b.pack(pady=(10, 2), padx=12); self.navbtn[key] = b; b.bind("<Enter>", lambda e, k=key: self.hover_open(k), add="+"); b.bind("<Leave>", self.hover_leave, add="+")
+        pb = ctk.CTkButton(rail, text="📣  Promote\nyour event", width=140, height=64, corner_radius=14,
+                           font=("Segoe UI", 14, "bold"), fg_color="#9b6a1c", hover_color="#c48a2a",
+                           command=self.open_promote)
+        pb.pack(side="bottom", fill="x", pady=12, padx=8)
         self.feed = ctk.CTkFrame(body, width=410, fg_color=PANEL, corner_radius=0); self.feed.pack(side="left", fill="y", padx=(2, 2)); self.feed.pack_propagate(False)
         top = ctk.CTkFrame(self.feed, fg_color="transparent"); top.pack(fill="x", padx=12, pady=(14, 6))
         self.back = ctk.CTkButton(top, text="‹", width=38, height=38, font=("Segoe UI", 24, "bold"), fg_color=CARD, hover_color=HOVER, command=self.show_genres)
@@ -371,7 +379,11 @@ class App(ctk.CTk):
         self.desc = ctk.CTkLabel(p, text="", font=("Segoe UI", 16), text_color="#c8ccd8", justify="left", anchor="w", wraplength=800); self.desc.pack(fill="x", padx=20, pady=10)
         self.promo = self.make_promo(p); self.promo.pack(fill="x", padx=20, pady=10); self.detail = ctk.CTkFrame(p, fg_color="transparent")
         self.cast_row = self.section("👥  Cast & Crew"); self.ev_box = self.section("📍  Local Venues & Showtimes")
-        self.about_box = self.section("📖  About"); nb = self.section("📝  Notes"); self.notes = ctk.CTkTextbox(nb, height=110, fg_color=CARD); self.notes.pack(fill="x", pady=4)
+        self.about_box = self.section("📖  About"); nb = self.section("📝  Notes")
+        self.tmdb_notes_mark = ctk.CTkLabel(nb, text="")
+        if self.tmdb_detail_image is not None:
+            self.tmdb_notes_mark.configure(image=self.tmdb_detail_image)
+        self.notes = ctk.CTkTextbox(nb, height=110, fg_color=CARD); self.notes.pack(fill="x", pady=4)
         ctk.CTkButton(nb, text="Save notes", command=self.save_notes).pack(anchor="e", pady=4)
     def section(self, label):
         ctk.CTkLabel(self.detail, text=label, font=("Segoe UI", 20, "bold"), anchor="w").pack(fill="x", padx=20, pady=(22, 6))
@@ -387,6 +399,10 @@ class App(ctk.CTk):
         self.logo_pil = dashboard.load_logo(BASE); Stage.logo = None
         if self.logo_pil is not None:
             wm = self.logo_pil.crop(dashboard.WORDMARK); Stage.logo = ImageTk.PhotoImage(wm.resize((190, int(190 * wm.height / wm.width)), Image.LANCZOS))
+        cinema_logo = dashboard.load_tmdb_logo(BASE, "tmdb_cinema.png")
+        Stage.tmdb_cinema_logo = ImageTk.PhotoImage(cinema_logo.resize((84, max(1, round(84 * cinema_logo.height / cinema_logo.width))), Image.LANCZOS)) if cinema_logo is not None else None
+        detail_logo = dashboard.load_tmdb_logo(BASE, "tmdb_detail.png")
+        self.tmdb_detail_image = ctk.CTkImage(detail_logo, size=(112, max(1, round(112 * detail_logo.height / detail_logo.width)))) if detail_logo is not None else None
     def set_icon(self):
         if self.logo_pil is None: return
         try:
@@ -399,14 +415,50 @@ class App(ctk.CTk):
     def make_promo(self, p):
         f = ctk.CTkFrame(p, fg_color="transparent"); self._promo_imgs = []; lg = dashboard.trim_logo(self.logo_pil)
         if lg is not None: ci = ctk.CTkImage(lg, size=(280, int(280 * lg.height / lg.width))); self._promo_imgs.append(ci); ctk.CTkLabel(f, text="", image=ci).pack(pady=(6, 4))
+        self.tmdb_promo_pil = dashboard.load_tmdb_logo(BASE, "tmdb_cinema.png")
+        self.tmdb_promo_size = (104, max(1, round(104 * self.tmdb_promo_pil.height / self.tmdb_promo_pil.width))) if self.tmdb_promo_pil is not None else None
+        self.tmdb_promo_ctk = None; self.tmdb_promo_label = ctk.CTkLabel(f, text="")
+        self._tmdb_promo_job = None; self._tmdb_promo_steps = 20
         path = dashboard.find_banner(BASE)
         if path:
-            im = Image.open(path).convert("RGB"); ci = ctk.CTkImage(im, size=(260, int(260 * im.height / im.width))); self._promo_imgs.append(ci); ctk.CTkLabel(f, text="", image=ci).pack(pady=(10, 0))
+            im = Image.open(path).convert("RGB"); ci = ctk.CTkImage(im, size=(260, int(260 * im.height / im.width))); self._promo_imgs.append(ci)
+            self.promo_banner = ctk.CTkLabel(f, text="", image=ci); self.promo_banner.pack(pady=(10, 0))
+        else:
+            self.promo_banner = None
         ctk.CTkButton(f, text="mythicmaskworks.com   ·   free app", fg_color="transparent", hover_color=HOVER, text_color="#c9a45c", font=("Segoe UI", 14, "bold"), command=lambda: webbrowser.open(dashboard.SITE)).pack(pady=4)
         return f
+    def _show_tmdb_promo(self, opacity=1.0):
+        if self.tmdb_promo_pil is None: return
+        image = self.tmdb_promo_pil.copy()
+        if opacity < 1:
+            alpha = image.getchannel("A").point(lambda value: round(value * opacity))
+            image.putalpha(alpha)
+        self.tmdb_promo_ctk = ctk.CTkImage(image, size=self.tmdb_promo_size)
+        self.tmdb_promo_label.configure(image=self.tmdb_promo_ctk)
+        if not self.tmdb_promo_label.winfo_manager():
+            self.tmdb_promo_label.pack(pady=(2, 6), before=self.promo_banner) if self.promo_banner else self.tmdb_promo_label.pack(pady=(2, 6))
+    def _update_tmdb_promo(self):
+        should_show = (self.cat in {"movies", "tv"} and self.sel is None
+                       and self.feed.winfo_manager() == "pack" and self.promo.winfo_manager() == "pack")
+        if should_show:
+            if self._tmdb_promo_job:
+                self.after_cancel(self._tmdb_promo_job); self._tmdb_promo_job = None
+            self._show_tmdb_promo(1.0)
+            return
+        if self._tmdb_promo_job or not self.tmdb_promo_label.winfo_ismapped(): return
+        self._tmdb_promo_steps = 20
+        def dissolve():
+            self._tmdb_promo_steps -= 1
+            self._show_tmdb_promo(max(0, self._tmdb_promo_steps / 20))
+            if self._tmdb_promo_steps <= 0:
+                self.tmdb_promo_label.pack_forget(); self._tmdb_promo_job = None
+            else:
+                self._tmdb_promo_job = self.after(100, dissolve)
+        self._tmdb_promo_job = self.after(100, dissolve)
     def show_promo(self, on):
         if on: self.detail.pack_forget(); self.promo.pack(fill="x", padx=20, pady=10)
         else: self.promo.pack_forget(); self.detail.pack(fill="x")
+        self._update_tmdb_promo()
         self.on_resize()
 
     # ---------- navigation ----------
@@ -414,7 +466,9 @@ class App(ctk.CTk):
         for k, b in self.navbtn.items(): b.configure(fg_color=hexc(ACC[k], 0.55) if k == cat else "transparent")
     def show_panel(self):
         if not self.feed.winfo_ismapped(): self.feed.pack(side="left", fill="y", padx=(2, 2), before=self.insp_box)
-    def hide_panel(self): self.feed.pack_forget()
+        self._update_tmdb_promo()
+    def hide_panel(self):
+        self.feed.pack_forget(); self._update_tmdb_promo()
     def _inside(self):
         try: w = self.winfo_containing(*self.winfo_pointerxy())
         except Exception: return False
@@ -451,6 +505,7 @@ class App(ctk.CTk):
         self.after(200, self.poll_ui)
     def open_cat(self, cat):
         self.cat, self.sel = cat, None; acc = ACC[cat]
+        self.hero.configure(height=190 if cat in {"movies", "tv"} else 150)
         self.items = list(database.load_local_catalog(cat)); self.mark_nav(cat)
         name = next(n for k, _, n in NAV if k == cat)
         amb = os.path.join(MEDIA, "ambient", cat + ".mp4")
@@ -543,6 +598,10 @@ class App(ctk.CTk):
             if real: ctk.CTkButton(right, text="🎟  Reserve / Buy Tickets", fg_color="#1E7A34", hover_color="#27a046", command=lambda u=real: webbrowser.open(u)).pack(side="left", padx=3)
             for name, url in events.vendor_links(f"{title} {g(ev, 'venue_name')}" if cat != "sports" else title, cat)[: (2 if real else 3)]:
                 ctk.CTkButton(right, text=name, width=90, fg_color="#2a2a3c" if real else "#1E7A34", hover_color=HOVER, command=lambda u=url: webbrowser.open(u)).pack(side="left", padx=3)
+        if self.tmdb_detail_image is not None and cat in {"movies", "tv"}:
+            self.tmdb_notes_mark.pack(fill="x", pady=(0, 6), before=self.notes)
+        else:
+            self.tmdb_notes_mark.pack_forget()
         self.notes.delete("1.0", "end"); self.notes.insert("1.0", g(it, "user_notes"))
     def vendor_row(self, parent, query, cat):
         r = ctk.CTkFrame(parent, fg_color="transparent"); r.pack(anchor="w", pady=4)
