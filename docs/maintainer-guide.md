@@ -15,10 +15,11 @@
 | Data | Current location | Notes |
 |---|---|---|
 | SQLite catalog and user accounts | `%USERPROFILE%\.spotlight\spotlight_storage_v2.db` | Includes usernames, salted password hashes, saved titles, notes, cast/crew, and events. Back up before schema changes. |
-| API/feed settings | `%USERPROFILE%\.spotlight\config.json` | May hold Ticketmaster and TMDB keys, plus community feed settings. Never commit this file. |
+| API/feed settings | `%USERPROFILE%\.spotlight\config.json` | May hold Ticketmaster, TMDB, Watchmode, optional future-provider credentials, and community feed settings. Never commit this file. |
 | User submissions | `%USERPROFILE%\.spotlight\my_submissions.json` | Can include an organizer's private contact email. Never publish it. |
 | Community cache | `%USERPROFILE%\.spotlight\community_feed.json` | Local sync state. |
 | UI metadata | `%USERPROFILE%\.spotlight\spotlight_meta.json` | The first startup copies the older project-root file here if needed; the old file remains as a local backup and is ignored by Git. |
+| Remembered sign-in | `%USERPROFILE%\.spotlight\config.json` | The last username is stored for convenience. An opted-in password is protected with Windows DPAPI for the current Windows user; it is not stored as plain text and cannot be recovered if the Windows profile changes. |
 | Downloaded image cache and new video files | `%USERPROFILE%\.spotlight\media` | Existing poster, backdrop, and people-photo folders are copied there without overwriting newer files. Existing videos remain in the project folder and are still searched; new previews and imports use the user-data folder. |
 
 ## Readability and handoff direction

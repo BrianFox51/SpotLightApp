@@ -4,9 +4,9 @@
 
 1. `main.py` imports the application modules, sets up project-relative media folders, defines category and display helpers, and defines the `App` window.
 2. `App.__init__` loads display metadata, seeds demo catalog entries once, builds the interface, starts background connection monitoring, and creates the sign-in/dashboard gate.
-3. `dashboard.Gate` handles guest access, account creation, sign-in, location lookup from a ZIP code, dashboard statistics, and controls for event synchronization.
+3. `dashboard.Gate` handles guest access, account creation, sign-in, location lookup from a ZIP code, dashboard statistics, API credential editing, provider status indicators, and the combined Refresh action.
 4. The catalog is read from SQLite through `database.py`. Selecting a title displays its local metadata, cast/crew, events, and notes. Spotlight Search stays available above the content and searches saved catalog fields across all categories or the current category.
-5. `online.py` retrieves missing details in background threads. `main.py` returns results to the UI thread through a queue.
+5. `online.py` retrieves missing details in background threads. It also syncs TMDB theatrical/airing catalogs and a bounded Watchmode U.S. streaming catalog; per-title Watchmode provider links are requested on demand. `main.py` returns results to the UI thread through a queue.
 6. `events.py` syncs Ticketmaster events; `community.py` syncs an optional organizer feed. The `promote.py` form lets an organizer prepare a submission for curator review.
 
 ## Active Python files
@@ -25,7 +25,7 @@ Implements the sign-in/create-account/guest screen and the dashboard shown after
 
 ### `online.py`
 
-Contains HTTP helpers and provider integrations. Its code can retrieve title/artist information and artwork from Apple search, Steam, TMDB, Wikidata, and Wikipedia. The dashboard's TMDB **Update All** imports the current U.S. theatrical movie list and the next seven days of on-air TV listings; selecting a title loads its extended TMDB details. For music, Apple song and music-video previews are cached locally; the detail screen chooses a video preview first, otherwise an audio preview over the animated waveform. Preview playback starts muted and the sound control can unmute it when VLC is available. Long detail text wraps and grows with the window, while only long result cards expand. It no longer scrapes YouTube's search page. `main.py` uses trailer IDs supplied by TMDB when available; otherwise its YouTube search action opens a normal search page in the user's browser. Person biographies use Wikipedia.
+Contains HTTP helpers and provider integrations. Its code can retrieve title/artist information and artwork from Apple search, Steam, TMDB, Wikidata, and Wikipedia. Dashboard **Refresh** imports TMDB's current U.S. theatrical movie list and next seven days of on-air TV listings, plus up to 250 Watchmode movies and 250 TV series available in the U.S. Selecting a streaming title retrieves provider links on demand; source and catalog responses expire after 30 days. Watchmode image URLs are not used. For music, Apple song and music-video previews are cached locally; the detail screen chooses a video preview first, otherwise an audio preview over the animated waveform. Preview playback starts muted and the sound control can unmute it when VLC is available. Long detail text wraps and grows with the window, while only long result cards expand. It no longer scrapes YouTube's search page. `main.py` uses trailer IDs supplied by TMDB when available; otherwise its YouTube search action opens a normal search page in the user's browser. Person biographies use Wikipedia.
 
 ### `events.py`
 

@@ -237,3 +237,25 @@ def prune_source(source, keep_ids):
     conn.close()
     for i in gone: delete_item(i)
     return len(gone)
+
+
+def prune_category_source(category, source, keep_ids):
+    """Remove stale rows for one provider without touching other categories or sources."""
+    conn = sqlite3.connect(DB_PATH); keep = set(keep_ids)
+    gone = [r[0] for r in conn.execute("SELECT id FROM media_items WHERE category = ? AND sources LIKE ?",
+                                      (category, f'%"{source}"%')).fetchall() if r[0] not in keep]
+    conn.close()
+    for item_id in gone: delete_item(item_id)
+    return len(gone)
+
+
+def prune_expired_watchmode(cutoff):
+    """Delete Watchmode catalog rows older than the Free plan's 30-day cache window."""
+    conn = sqlite3.connect(DB_PATH)
+    gone = [row[0] for row in conn.execute(
+        "SELECT id FROM media_items WHERE category = 'streaming' AND last_updated < ?", (cutoff,)
+    ).fetchall()]
+    conn.close()
+    for media_id_value in gone:
+        delete_item(media_id_value)
+    return len(gone)

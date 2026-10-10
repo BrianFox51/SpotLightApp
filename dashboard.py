@@ -5,11 +5,21 @@ import customtkinter as ctk
 from PIL import Image
 import database
 import events
+import local_secrets
 
 BG, PANEL, CARD, HOVER, GOLD = "#0b0b11", "#12121a", "#1a1a26", "#28283e", "#c9a45c"
 SITE = "https://mythicmaskworks.com"
 LOGO_BBOX = (38, 42, 1219, 1122)     # visible area of LightWave_logo.png
 WORDMARK = (30, 655, 1225, 880)      # the "SPOTLIGHT" lettering inside it
+
+API_FIELDS = (
+    ("ticketmaster_key", "Ticketmaster Discovery", "API key · live events", "https://developer.ticketmaster.com/products-and-docs/apis/getting-started/", "active"),
+    ("tmdb_key", "TMDB", "Read Access Token or v3 API key · movies and TV", "https://www.themoviedb.org/settings/api", "active"),
+    ("watchmode_key", "Watchmode", "API key · US streaming catalog and availability", "https://api.watchmode.com/", "active"),
+    ("spotify_client_id", "Spotify (planned)", "Client ID · optional future music integration", "https://developer.spotify.com/dashboard", "planned"),
+    ("spotify_client_secret", "Spotify (planned)", "Client secret · optional future music integration", "https://developer.spotify.com/dashboard", "planned"),
+    ("youtube_api_key", "YouTube Data API (optional)", "API key · not currently used by Spotlight", "https://console.cloud.google.com/", "planned"),
+)
 
 
 def load_logo(base):
@@ -94,10 +104,22 @@ class Gate(ctk.CTkFrame):
         s.clear(); s.header(); p=s.page
         tabs = ctk.CTkTabview(p, width=460, height=250, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Account")
+        cfg = events.load_cfg()
         u1 = ctk.CTkEntry(si, placeholder_text="Username", width=320); u1.pack(pady=(14, 6))
+        remembered_user = cfg.get("remembered_username", "")
+        if remembered_user: u1.insert(0, remembered_user)
         p1 = ctk.CTkEntry(si, placeholder_text="Password", show="•", width=320); p1.pack(pady=6)
-        ctk.CTkButton(si, text="Sign In", width=320, command=lambda: s.do_login(u1.get(), p1.get())).pack(pady=10)
-        p1.bind("<Return>", lambda e: s.do_login(u1.get(), p1.get()))
+        remember = ctk.BooleanVar(value=cfg.get("remember_me", True))
+        remembered_password = local_secrets.unprotect_text(cfg.get("remembered_password_dpapi", ""))
+        if remember.get() and remembered_password: p1.insert(0, remembered_password)
+        ctk.CTkCheckBox(si, text="Remember password on this PC (securely)", variable=remember).pack(anchor="w", padx=70, pady=(2, 2))
+        ctk.CTkButton(si, text="Sign In", width=320, command=lambda: s.do_login(u1.get(), p1.get(), remember.get())).pack(pady=8)
+        p1.bind("<Return>", lambda e: s.do_login(u1.get(), p1.get(), remember.get()))
+        recovery = ctk.CTkFrame(si, fg_color="transparent"); recovery.pack(pady=(0, 4))
+        ctk.CTkButton(recovery, text="Forgot username?", width=130, height=24, fg_color="transparent", hover_color=HOVER,
+                      text_color="#78aef5", command=lambda: s.show_recovery_message("Username recovery is not set up yet. You can continue as a guest while we add account recovery.")).pack(side="left", padx=3)
+        ctk.CTkButton(recovery, text="Forgot password?", width=130, height=24, fg_color="transparent", hover_color=HOVER,
+                      text_color="#78aef5", command=lambda: s.show_recovery_message("Password reset is not set up yet. Passwords are stored as secure hashes and cannot be recovered; reset support will be added later.")).pack(side="left", padx=3)
         u2 = ctk.CTkEntry(su, placeholder_text="Username (3+ characters)", width=320); u2.pack(pady=(10, 4))
         p2 = ctk.CTkEntry(su, placeholder_text="Password (6+ characters)", show="•", width=320); p2.pack(pady=4)
         z2 = ctk.CTkEntry(su, placeholder_text="ZIP code (finds events near you)", width=320); z2.pack(pady=4)
@@ -106,9 +128,25 @@ class Gate(ctk.CTkFrame):
         ctk.CTkButton(p, text="Continue as guest", fg_color=CARD, hover_color=HOVER, command=s.guest).pack(pady=6)
         s.sponsor_footer(p)
 
-    def do_login(s, u, p):
+    def show_recovery_message(s, message):
+        try: s.err.configure(text=message)
+        except Exception: pass
+
+    def remember_credentials(s, username, password, enabled):
+        cfg = events.load_cfg()
+        cfg["remember_me"] = bool(enabled)
+        cfg["remembered_username"] = username.strip() if username.strip() else ""
+        protected = local_secrets.protect_text(password) if enabled else None
+        if protected:
+            cfg["remembered_password_dpapi"] = protected
+        else:
+            cfg.pop("remembered_password_dpapi", None)
+        events.save_cfg(cfg)
+
+    def do_login(s, u, p, remember=True):
         user = database.verify_user(u, p) if u.strip() and p else None
         if not user: return s.err.configure(text="Wrong username or password.")
+        s.remember_credentials(u, p, remember)
         s.user = user; s.show_dashboard()
 
     def do_signup(s, u, p, z):
@@ -119,7 +157,9 @@ class Gate(ctk.CTkFrame):
         city, state, lat, lng = lookup_zip(z) if z else ("", "", None, None)
         ok, msg = database.create_user(u, p, z, city, state, lat, lng)
         if not ok: return s.err.configure(text=msg)
-        s.user = database.verify_user(u, p); s.show_dashboard()
+        s.user = database.verify_user(u, p)
+        s.remember_credentials(u, p, True)
+        s.show_dashboard()
 
     def guest(s):
         s.user = {"display_name": "Guest", "city": "", "state": "", "zip": ""}; s.show_dashboard()
@@ -137,7 +177,7 @@ class Gate(ctk.CTkFrame):
         ctk.CTkLabel(p, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
         where = ", ".join(x for x in (city, state) if x) or "No location set: create an account with a ZIP code to see what's near you"
         ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14)).pack(pady=(2, 22))
-        row = ctk.CTkFrame(p, fg_color="transparent"); row.pack(pady=(0, 18))
+        dashboard_actions = ctk.CTkFrame(p, fg_color="transparent"); dashboard_actions.pack(pady=(0, 18))
         cards = [("Titles found", st["total"]), ("🎵 Music", c.get("music", 0)), ("🎬 Movies", c.get("movies", 0)), ("📺 TV", c.get("tv", 0)),
                  ("🎮 Games", c.get("games", 0)), ("🏆 Sports", c.get("sports", 0)), ("🎪 Festivals", c.get("festivals", 0)), ("📍 Local events saved", st["events"]),
                  (f"Titles near {city}" if city else "Titles near you", st["near_city"] if city else "-"),
@@ -148,7 +188,7 @@ class Gate(ctk.CTkFrame):
             ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD).pack(pady=(16, 0))
             ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5").pack()
         cfg = events.load_cfg(); live = ctk.CTkFrame(p, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
-        ctk.CTkLabel(live, text="🌐  Find concerts, sports, festivals and fairs (Ticketmaster)", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
+        ctk.CTkLabel(live, text="🌐  Spotlight data sources", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
         area_row = ctk.CTkFrame(live, fg_color="transparent"); area_row.pack(anchor="w", padx=14, pady=(6, 2))
         ctk.CTkLabel(area_row, text="Search area", text_color="#9aa0b5").pack(side="left", padx=(0, 8))
         area_choices = ["Nearby (75 mi)"]
@@ -156,29 +196,111 @@ class Gate(ctk.CTkFrame):
         if state_choice: area_choices.append(state_choice)
         area = ctk.StringVar(value=area_choices[0])
         ctk.CTkOptionMenu(area_row, values=area_choices, variable=area, width=170).pack(side="left")
-        def update_all():
-            save_key()
-            s.app.sync_tmdb(s.say, tkey.get().strip())
-        ctk.CTkButton(area_row, text="🔄  Update All", width=125, command=update_all).pack(side="left", padx=(10, 0))
-        lr = ctk.CTkFrame(live, fg_color="transparent"); lr.pack(padx=14, pady=(0, 4))
-        key = ctk.CTkEntry(lr, width=300, show="•", placeholder_text="Paste your free Ticketmaster API key"); key.pack(side="left", padx=(0, 6))
-        if cfg.get("ticketmaster_key"): key.insert(0, cfg["ticketmaster_key"])
-        lr2 = ctk.CTkFrame(live, fg_color="transparent"); lr2.pack(padx=14, pady=(0, 4))
-        tkey = ctk.CTkEntry(lr2, width=300, show="•", placeholder_text="Paste your TMDB API Read Access Token"); tkey.pack(side="left", padx=(0, 6))
-        if cfg.get("tmdb_key"): tkey.insert(0, cfg["tmdb_key"])
-        def save_key(): events.save_cfg({**events.load_cfg(), "ticketmaster_key": key.get().strip(), "tmdb_key": tkey.get().strip()})
-        ctk.CTkButton(lr2, text="Save keys", width=110, command=lambda: (save_key(), s.say("Keys saved on this PC."))).pack(side="left", padx=4)
-        ctk.CTkButton(lr2, text="Get a free key", fg_color="transparent", hover_color=HOVER, text_color=GOLD, command=lambda: webbrowser.open("https://www.themoviedb.org/settings/api")).pack(side="left")
-        ctk.CTkButton(lr, text="🔄  Find events", command=lambda: (save_key(), s.app.sync_events(s.say, "state" if area.get() == state_choice and state_choice else "nearby"))).pack(side="left", padx=4)
-        ctk.CTkButton(lr, text="Get a free key", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
+        def refresh_all():
+            save_api_keys()
+            current = events.load_cfg()
+            report = lambda key, state, message: s.app.uiq.put((s.update_api_status, (key, state, message)))
+            s.app.sync_tmdb(s.say, current.get("tmdb_key", ""), report)
+            s.app.sync_events(s.say, "state" if area.get() == state_choice and state_choice else "nearby", report)
+            s.app.sync_watchmode(s.say, current.get("watchmode_key", ""), report)
+
+        ctk.CTkButton(area_row, text="🔄  Refresh", width=125, command=refresh_all).pack(side="left", padx=(10, 0))
+
+        manager_head = ctk.CTkFrame(live, fg_color="transparent"); manager_head.pack(fill="x", padx=14, pady=(6, 2))
+        manager = ctk.CTkScrollableFrame(live, fg_color=PANEL, corner_radius=10, width=560, height=255)
+        key_entries = {}
+        s.api_status_widgets = {}
+        show_keys = False
+        for api_key, label, hint, link, status_kind in API_FIELDS:
+            api_row = ctk.CTkFrame(manager, fg_color="transparent"); api_row.pack(fill="x", padx=6, pady=4)
+            left = ctk.CTkFrame(api_row, fg_color="transparent"); left.pack(side="left", fill="x", expand=True)
+            suffix = " · planned" if status_kind == "planned" else ""
+            ctk.CTkLabel(left, text=label + suffix, font=("Segoe UI", 13, "bold"), anchor="w").pack(fill="x")
+            ctk.CTkLabel(left, text=hint, text_color="#9aa0b5", font=("Segoe UI", 10), anchor="w").pack(fill="x")
+            status = cfg.get("api_statuses", {}).get(api_key, {})
+            state = status.get("state", "not_set" if not cfg.get(api_key) else "not_checked")
+            status_color = {"ok": "#45b86b", "bad": "#df4c55", "not_set": "#a8aab2", "not_checked": "#a8aab2", "planned": "#a8aab2"}.get(state, "#a8aab2")
+            status_label = ctk.CTkLabel(api_row, text="✓" if state == "ok" else ("×" if state == "bad" else "□"),
+                                        width=28, font=("Segoe UI", 19, "bold"), text_color=status_color)
+            status_label.pack(side="left", padx=6)
+            s.api_status_widgets[api_key] = status_label
+            entry = ctk.CTkEntry(api_row, width=230, show="•", placeholder_text="Paste credential here")
+            entry.pack(side="right", padx=(8, 2), pady=4)
+            if cfg.get(api_key): entry.insert(0, cfg[api_key])
+            key_entries[api_key] = entry
+        ctk.CTkLabel(manager, text="Edit a saved key by replacing its field, or clear the field to remove it. Use Show keys to inspect saved values.",
+                     text_color="#9aa0b5", font=("Segoe UI", 10), wraplength=520, justify="left").pack(fill="x", padx=12, pady=(8, 2))
+        ctk.CTkLabel(manager, text="No key required today: Apple Search (music previews), Steam Store, Wikipedia, and Wikidata.",
+                     text_color="#9aa0b5", font=("Segoe UI", 10), wraplength=520, justify="left").pack(fill="x", padx=12, pady=(8, 12))
+
+        def save_api_keys():
+            current = events.load_cfg()
+            old_values = {name: current.get(name, "") for name in key_entries}
+            current.update({name: entry.get().strip() for name, entry in key_entries.items()})
+            statuses = current.setdefault("api_statuses", {})
+            for name, value in ((name, entry.get().strip()) for name, entry in key_entries.items()):
+                if old_values.get(name, "") != value:
+                    state = "not_checked" if value else "not_set"
+                    statuses[name] = {"state": state, "message": "Credential changed; refresh to check." if value else "No credential saved."}
+                    widget = s.api_status_widgets.get(name)
+                    if widget is not None and widget.winfo_exists():
+                        widget.configure(text="□", text_color="#a8aab2")
+            events.save_cfg(current)
+
+        def update_api_status(api_key, state, message):
+            current = events.load_cfg()
+            current.setdefault("api_statuses", {})[api_key] = {"state": state, "message": message, "checked_at": int(__import__("time").time())}
+            events.save_cfg(current)
+            widget = s.api_status_widgets.get(api_key)
+            if widget is not None and widget.winfo_exists():
+                widget.configure(text="✓" if state == "ok" else ("×" if state == "bad" else "□"),
+                                 text_color={"ok": "#45b86b", "bad": "#df4c55"}.get(state, "#a8aab2"))
+            if message: s.say(message)
+        s.update_api_status = update_api_status
+
+        manager_open = False
+
+        def toggle_key_manager():
+            nonlocal manager_open
+            manager_open = not manager_open
+            if manager_open:
+                manager.pack(fill="x", padx=14, pady=(0, 4))
+                manager_toggle.configure(text="🔐  API Keys & Integrations  ▴")
+            else:
+                manager.pack_forget()
+                manager_toggle.configure(text="🔐  API Keys & Integrations  ▾")
+
+        manager_toggle = ctk.CTkButton(manager_head, text="🔐  API Keys & Integrations  ▾", height=34,
+                                       fg_color=CARD, hover_color=HOVER, command=toggle_key_manager)
+        manager_toggle.pack(side="left")
+        ctk.CTkButton(manager_head, text="Save keys", width=100, height=34, command=lambda: (save_api_keys(), s.say("API credentials saved on this PC."))).pack(side="left", padx=8)
+
+        def toggle_key_visibility():
+            nonlocal show_keys
+            show_keys = not show_keys
+            for entry in key_entries.values():
+                entry.configure(show="" if show_keys else "•")
+            visibility_toggle.configure(text="Hide keys" if show_keys else "Show keys")
+
+        visibility_toggle = ctk.CTkButton(manager_head, text="Show keys", width=92, height=34,
+                                           fg_color=CARD, hover_color=HOVER, command=toggle_key_visibility)
+        visibility_toggle.pack(side="left")
+
+        event_row = ctk.CTkFrame(live, fg_color="transparent"); event_row.pack(fill="x", padx=14, pady=(2, 4))
+        ctk.CTkButton(event_row, text="Ticketmaster key", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
                       command=lambda: webbrowser.open("https://developer.ticketmaster.com/products-and-docs/apis/getting-started/")).pack(side="left")
-        s.status = ctk.CTkLabel(live, text=status or "API keys stay on this PC.", text_color="#9aa0b5", font=("Segoe UI", 12)); s.status.pack(pady=(0, 4))
+        ctk.CTkButton(event_row, text="TMDB key", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
+                      command=lambda: webbrowser.open("https://www.themoviedb.org/settings/api")).pack(side="left")
+        ctk.CTkButton(event_row, text="Watchmode", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
+                      command=lambda: webbrowser.open("https://api.watchmode.com/")).pack(side="left")
+        s.status = ctk.CTkLabel(live, text=status or "Credentials stay in this PC's local Spotlight settings. □ not checked   ✓ working   × needs attention",
+                                text_color="#9aa0b5", font=("Segoe UI", 11), wraplength=560, justify="center"); s.status.pack(pady=(0, 4))
         ctk.CTkLabel(live, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#9aa0b5", font=("Segoe UI", 11)).pack(pady=(0, 10))
         s.sponsor_footer(p)
-        ctk.CTkButton(row, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.place_forget).pack(side="left", padx=8)
-        ctk.CTkButton(row, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote).pack(side="left", padx=8)
-        ctk.CTkButton(row, text="🔄 Community", width=120, height=46, fg_color=CARD, hover_color=HOVER, command=lambda: s.app.sync_community(s.say)).pack(side="left", padx=8)
-        ctk.CTkButton(row, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out).pack(side="left", padx=8)
+        ctk.CTkButton(dashboard_actions, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.place_forget).pack(side="left", padx=8)
+        ctk.CTkButton(dashboard_actions, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote).pack(side="left", padx=8)
+        ctk.CTkButton(dashboard_actions, text="🔄 Community", width=120, height=46, fg_color=CARD, hover_color=HOVER, command=lambda: s.app.sync_community(s.say)).pack(side="left", padx=8)
+        ctk.CTkButton(dashboard_actions, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out).pack(side="left", padx=8)
 
     def sign_out(s):
         s.user = None; s.show_login()

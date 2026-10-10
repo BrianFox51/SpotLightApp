@@ -1,5 +1,5 @@
 """Spotlight - Local Media Dashboard. Install required packages from requirements.txt."""
-import os, re, sys, json, math, time, queue, zlib, shutil, threading, subprocess, importlib.util, webbrowser, urllib.request, urllib.parse
+import os, re, sys, json, math, time, queue, zlib, shutil, threading, subprocess, importlib.util, webbrowser, urllib.request, urllib.parse, urllib.error
 import tkinter as tk
 from tkinter import messagebox, filedialog, font as tkfont
 import numpy as np
@@ -46,10 +46,10 @@ def _copy_legacy_cache(folder):
 for _cache_name in ("posters", "backdrops", "people"):
     _copy_legacy_cache(_cache_name)
 BG, PANEL, CARD, HOVER = "#0b0b11", "#12121a", "#1a1a26", "#28283e"
-NAV = [("music", "🎵", "Concerts & Music"), ("movies", "🎬", "Cinema Feeds"), ("tv", "📺", "TV Networks"), ("games", "🎮", "Gaming Hub"), ("sports", "🏆", "Sports & Events"), ("festivals", "🎪", "Festivals & Fairs")]
-ACC = {"music": (214, 64, 190), "movies": (226, 72, 58), "tv": (36, 182, 196), "games": (84, 214, 108), "sports": (255, 140, 40), "festivals": (150, 110, 255)}
-FXK = {"music": "music", "movies": "movies", "tv": "tv", "games": "games", "sports": "tv", "festivals": "music"}
-TAG = {"music": "Upcoming concerts & music events", "movies": "Now showing", "tv": "TV airing this week", "games": "Playing now", "sports": "Upcoming events", "festivals": "Happening soon"}
+NAV = [("music", "🎵", "Concerts & Music"), ("movies", "🎬", "Cinema Feeds"), ("tv", "📺", "TV Networks"), ("streaming", "▶", "Streaming"), ("games", "🎮", "Gaming Hub"), ("sports", "🏆", "Sports & Events"), ("festivals", "🎪", "Festivals & Fairs")]
+ACC = {"music": (214, 64, 190), "movies": (226, 72, 58), "tv": (36, 182, 196), "streaming": (40, 190, 170), "games": (84, 214, 108), "sports": (255, 140, 40), "festivals": (150, 110, 255)}
+FXK = {"music": "music", "movies": "movies", "tv": "tv", "streaming": "tv", "games": "games", "sports": "tv", "festivals": "music"}
+TAG = {"music": "Upcoming concerts & music events", "movies": "Now showing", "tv": "TV airing this week", "streaming": "Movies and TV currently available to stream in the US", "games": "Playing now", "sports": "Upcoming events", "festivals": "Happening soon"}
 UNIT = {"music": "event", "sports": "event", "festivals": "event"}
 GENRES = {"music": [("Pop", "🎤"), ("Hip-Hop", "🎧"), ("Rock", "🎸"), ("Electronic", "🎛️"), ("R&B", "💜"), ("Country", "🤠"), ("Latin", "💃"), ("Jazz", "🎷"), ("Other", "🎼")],
           "movies": [("Action", "💥"), ("Drama", "🎭"), ("Comedy", "😂"), ("Sci-Fi", "🚀"), ("Horror", "👻"), ("Thriller", "🔪"), ("Animation", "✏️"), ("Indie", "🎞️")],
@@ -352,6 +352,8 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__(); self.title("Spotlight - Local Media Dashboard"); self.geometry("1440x880"); self.minsize(1100, 700); self.configure(fg_color=BG)
         self.meta, self.cat, self.genre, self.items, self.sel, self.imgs, self.cards, self.online, self._rs = Meta(), "music", None, [], None, [], {}, None, None
+        database.prune_expired_watchmode(int(time.time()) - 30 * 86400)
+        self._prune_watchmode_metadata()
         self.page = 0; self.search_job = None; self.search_active = False; self.search_results = []; self.search_query = ""
         self.uiq, self.sel_cat, self.pinned, self._hj, self._bio = queue.Queue(), None, False, None, None
         self.cast_all = self._tproc = None
@@ -380,6 +382,25 @@ class App(ctk.CTk):
             except Exception as e: print("seed skipped:", title, e)
             self.meta.d.setdefault(f"{cat}|{title}", {}).setdefault("genre", genre)
         self.meta.d["_seeded_v4"] = True; self.meta.save()
+
+    def _prune_watchmode_metadata(self):
+        """Expire Watchmode non-image cache entries at the Free plan's 30-day limit."""
+        cutoff = int(time.time()) - 30 * 86400
+        changed = False
+        for key, value in list(self.meta.d.items()):
+            if not key.startswith("streaming|") or not isinstance(value, dict):
+                continue
+            catalog_time = int(value.get("watchmode_catalog_at", 0) or 0)
+            if catalog_time and catalog_time < cutoff:
+                self.meta.d.pop(key, None); changed = True
+                continue
+            sources_time = int(value.get("watchmode_sources_at", 0) or 0)
+            if sources_time and sources_time < cutoff:
+                value.pop("watchmode_sources", None)
+                value.pop("watchmode_sources_at", None)
+                changed = True
+        if changed:
+            self.meta.save()
 
     def genre_of(self, it):
         metadata = self.meta.get(self.cat, g(it, "title"))
@@ -547,6 +568,13 @@ class App(ctk.CTk):
     # ---------- navigation ----------
     def mark_nav(self, cat):
         for k, b in self.navbtn.items(): b.configure(fg_color=hexc(ACC[k], 0.55) if k == cat else "transparent")
+    def reset_list_scroll(self):
+        """Return the category/event sidebar to its first row after rebuilding it."""
+        canvas = getattr(self.list, "_parent_canvas", None)
+        if canvas is None:
+            return
+        # Defer until Tk has recalculated the scroll region for the new children.
+        self.after_idle(lambda: canvas.yview_moveto(0) if canvas.winfo_exists() else None)
     def show_panel(self):
         if not self.feed.winfo_ismapped(): self.feed.pack(side="left", fill="y", padx=(2, 2), before=self.insp_box)
         self._update_tmdb_promo()
@@ -606,6 +634,7 @@ class App(ctk.CTk):
         self.search_active = False; self.search_results = []
         self.genre = None; self.back.pack_forget(); self.feed_title.configure(text="Events" if self.cat in UNIT else "Genres")
         for w in self.list.winfo_children(): w.destroy()
+        self.reset_list_scroll()
         cnt = {}
         if self.cat == "music":
             for item in self.items:
@@ -614,6 +643,15 @@ class App(ctk.CTk):
             tiles = ([ ("All", "⭐", len(self.items)) ] if self.items else [])
             tiles.extend((name, icon, cnt.get(name, 0)) for name, icon in (("Bands & Live Shows", "🎤"), ("Music Festivals", "🎪")) if cnt.get(name, 0))
             tiles.extend((name, icon, cnt.get(name, 0)) for name, icon in GENRES[self.cat] if cnt.get(name, 0))
+        elif self.cat == "streaming":
+            movies = sum(1 for item in self.items if g(item, "sub") == "Movie")
+            shows = sum(1 for item in self.items if g(item, "sub") == "TV Series")
+            tiles = ([ ("All", "⭐", len(self.items)) ] if self.items else [])
+            tiles.extend((name, icon, count) for name, icon, count in (("Movies", "🎬", movies), ("TV Series", "📺", shows)) if count)
+            for name, _icon in sorted({(self.genre_of(item), "📺") for item in self.items}):
+                count = sum(1 for item in self.items if self.genre_of(item) == name)
+                if count:
+                    tiles.append((name, "🎭", count))
         else:
             for it in self.items: cnt[self.genre_of(it)] = cnt.get(self.genre_of(it), 0) + 1
             tiles = ([ ("All", "⭐", len(self.items)) ] if self.items else [])
@@ -634,13 +672,18 @@ class App(ctk.CTk):
         self.search_active = False
         self.genre = genre; self.back.pack(side="left", before=self.feed_title); self.feed_title.configure(text=f"{genre} · {TAG[self.cat]}" if genre != "All" else TAG[self.cat])
         for w in self.list.winfo_children(): w.destroy()
+        self.reset_list_scroll()
         self.list.grid_columnconfigure((0, 1), weight=0)
         if self.cat == "music":
             rows = [item for item in self.items if genre == "All" or
                     (genre in {"Bands & Live Shows", "Music Festivals"} and self.music_type_of(item) == genre) or
                     self.genre_of(item) == genre]
         else:
-            rows = [item for item in self.items if genre == "All" or self.genre_of(item) == genre]
+            if self.cat == "streaming" and genre in {"Movies", "TV Series"}:
+                wanted = "Movie" if genre == "Movies" else "TV Series"
+                rows = [item for item in self.items if g(item, "sub") == wanted]
+            else:
+                rows = [item for item in self.items if genre == "All" or self.genre_of(item) == genre]
         rows.sort(key=lambda item: -float(g(item, "score", 0) or 0))
         page_size = 25
         page_count = max(1, (len(rows) + page_size - 1) // page_size)
@@ -823,7 +866,9 @@ class App(ctk.CTk):
         for k, card in self.cards.items():
             card_category = self.shown[k].get("_search_category", self.cat)
             card.configure(fg_color=hexc(ACC[card_category], 0.35) if k == n else CARD)
-        self.render_detail(it); self.fetch_online(it)
+        self.render_detail(it)
+        if category == "streaming": self.fetch_watchmode_sources(it)
+        else: self.fetch_online(it)
         if self.auto_var.get() and self.meta.get(category, g(it, "title")).get("yt_id"): self.play_trailer()
     def render_detail(self, it):
         cat = self.sel_cat; acc = ACC[cat]; title = g(it, "title"); m = self.meta.get(cat, title); city = (self.gate.user or {}).get("city", "") if hasattr(self, "gate") else ""
@@ -834,7 +879,9 @@ class App(ctk.CTk):
         else:
             audio = None
         bp = os.path.join(BACKDROPS, slug(title) + ".jpg"); still = Image.open(bp).convert("RGB") if os.path.exists(bp) and not vid else None
-        if cat == "music" and vid:
+        if cat == "streaming":
+            self.theater.play(None, FXK[cat], acc, None, (title, f"STREAMING AVAILABILITY · US  ·  {sub_of(it)}"), still=still)
+        elif cat == "music" and vid:
             self.theater.play(vid, "wave", acc, None, (title, f"MUSIC VIDEO PREVIEW · muted · {sub_of(it)}"), still=None)
         elif cat == "music" and audio:
             self.theater.play_audio(audio, "wave", acc, (title, f"AUDIO PREVIEW · muted · {sub_of(it)}"))
@@ -845,12 +892,14 @@ class App(ctk.CTk):
         self.theater.configure(cursor="hand2" if self.theater.on_click else "")
         ps = (300, 300) if cat == "music" else (250, 375); self.poster.configure(image=ctk.CTkImage(art(title, acc, (ps[0] * 2, ps[1] * 2)), size=ps)); self.poster.pack(side="left", anchor="n", padx=(0, 12), before=self.theater)
         for b in (self.find_btn, self.trailer_btn, self.mute_btn, self.buy_btn): b.pack_forget()
-        if m.get("yt_id"): self.trailer_btn.pack(side="left", padx=8)
+        if cat == "streaming":
+            pass
+        elif m.get("yt_id"): self.trailer_btn.pack(side="left", padx=8)
         else: self.find_btn.pack(side="left", padx=8)
         if self.theater.vlc_on: self.mute_btn.configure(text="🔊  Unmute" if self.theater.muted else "🔇  Mute"); self.mute_btn.pack(side="left", padx=8)
         if m.get("buy_url"): self.buy_btn.configure(text="🛒  " + m.get("buy_label", "Buy / Rent")); self.buy_btn.pack(side="left", padx=8)
         extra = "   •   ".join(x for x in (m.get("rated"), m.get("runtime")) if x)
-        lead = ("🤝 Community listing   •   " if m.get("community") else "") + f"📅 {g(it, 'recent_shown')}" if cat in UNIT else f"★ {g(it, 'score')}   •   First: {g(it, 'first_shown')}   •   Latest: {g(it, 'recent_shown')}"
+        lead = ("🤝 Community listing   •   " if m.get("community") else "") + f"📅 {g(it, 'recent_shown')}" if cat in UNIT else ("Available to stream in the U.S." if cat == "streaming" else f"★ {g(it, 'score')}   •   First: {g(it, 'first_shown')}   •   Latest: {g(it, 'recent_shown')}")
         self.title.configure(text=f"{title} ({g(it, 'year')})" if g(it, "year") else title)
         self.meta_lbl.configure(text=f"{sub_of(it)}   •   {self.genre_of(it)}   •   {lead}" + (f"   •   {extra}" if extra else ""))
         self.desc.configure(text=g(it, "description")); self.render_cast(it)
@@ -864,10 +913,32 @@ class App(ctk.CTk):
         if m.get("tmdb_url"):
             ctk.CTkButton(self.about_box, text="Full cast, crew & details on TMDB", fg_color=CARD, hover_color=HOVER, command=lambda u=m["tmdb_url"]: webbrowser.open(u)).pack(anchor="w", pady=2)
             ctk.CTkLabel(self.about_box, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#777", font=("Segoe UI", 11)).pack(anchor="w")
+        if cat == "streaming":
+            ctk.CTkLabel(self.about_box, text="Streaming availability in the United States", font=("Segoe UI", 17, "bold"), anchor="w").pack(fill="x", pady=(14, 5))
+            sources = m.get("watchmode_sources")
+            if sources is None:
+                text = m.get("watchmode_sources_error") or "Add a Watchmode API key on the dashboard and select Refresh to load provider availability."
+                ctk.CTkLabel(self.about_box, text=text, text_color="#9aa0b5", anchor="w", justify="left", wraplength=detail_width).pack(fill="x")
+            elif not sources:
+                ctk.CTkLabel(self.about_box, text="No US streaming services were returned for this title.", text_color="#9aa0b5", anchor="w").pack(fill="x")
+            else:
+                source_row = ctk.CTkFrame(self.about_box, fg_color="transparent"); source_row.pack(fill="x", pady=(2, 4))
+                for source in sources:
+                    name = source.get("name") or "Streaming service"
+                    kind = source.get("type") or ""
+                    price = source.get("price") or ""
+                    label = " · ".join(str(value) for value in (name, kind, price) if value)
+                    url = source.get("web_url")
+                    if url:
+                        ctk.CTkButton(source_row, text=label, fg_color=CARD, hover_color=HOVER,
+                                      command=lambda link=url: webbrowser.open(link)).pack(anchor="w", fill="x", pady=2)
+                    else:
+                        ctk.CTkLabel(source_row, text=label, text_color="#cfd3e0", anchor="w").pack(fill="x", pady=2)
+            ctk.CTkLabel(self.about_box, text="Availability powered by Watchmode.", text_color="#777", font=("Segoe UI", 11)).pack(anchor="w", pady=(4, 0))
         for w in self.ev_box.winfo_children(): w.destroy()
         self.event_detail_labels = []
-        evs = database.load_details(g(it, "id"))[1]
-        if not evs:
+        evs = [] if cat == "streaming" else database.load_details(g(it, "id"))[1]
+        if not evs and cat != "streaming":
             ctk.CTkLabel(self.ev_box, text="No saved dates yet. Search ticket vendors:", text_color="#888").pack(anchor="w"); self.vendor_row(self.ev_box, title, cat)
         for ev in evs:
             r = ctk.CTkFrame(self.ev_box, fg_color=CARD, corner_radius=12); r.pack(fill="x", pady=4)
@@ -938,6 +1009,38 @@ class App(ctk.CTk):
                 except Exception: break
             self.uiq.put((self.apply_online, (cat, title, res, ppl, iid)))
         threading.Thread(target=work, daemon=True).start()
+
+    def fetch_watchmode_sources(self, item):
+        """Load a title's US provider links once and cache non-image data for up to 30 days."""
+        title = g(item, "title"); meta = self.meta.get("streaming", title)
+        title_id = meta.get("watchmode_id")
+        if not title_id: return
+        checked = int(meta.get("watchmode_sources_at", 0) or 0)
+        if meta.get("watchmode_sources") is not None and time.time() - checked < 30 * 86400: return
+        if time.time() - float(meta.get("watchmode_sources_try", 0) or 0) < 60: return
+        key = events.load_cfg().get("watchmode_key", "")
+        if not key: return
+        def work():
+            try:
+                sources = online.watchmode_sources(key, title_id, "US")
+                if isinstance(sources, dict):
+                    if sources.get("error"): raise RuntimeError(str(sources["error"]))
+                    sources = sources.get("sources", [])
+                self.uiq.put((self.apply_watchmode_sources, (title, sources or None)))
+            except Exception as exc:
+                self.uiq.put((self.apply_watchmode_sources, (title, None, str(exc))))
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_watchmode_sources(self, title, sources, error=""):
+        if error:
+            self.meta.put("streaming", title, watchmode_sources_error="Provider availability could not be loaded. Check the Watchmode connection and try again.", watchmode_sources_try=time.time())
+            if hasattr(self.gate, "update_api_status"):
+                self.gate.update_api_status("watchmode_key", "bad", "Watchmode provider lookup failed; the saved key may be invalid or the service unavailable.")
+            if self.sel is not None and self.sel_cat == "streaming" and g(self.sel, "title") == title: self.render_detail(self.sel)
+            return
+        self.meta.put("streaming", title, watchmode_sources=sources or [], watchmode_sources_at=int(time.time()), watchmode_sources_try=0, watchmode_sources_error="")
+        if self.sel is not None and self.sel_cat == "streaming" and g(self.sel, "title") == title:
+            self.render_detail(self.sel)
     def apply_online(self, cat, title, res, ppl, iid):
         if res is not None:
             credits = res.pop("credits", None)
@@ -977,18 +1080,31 @@ class App(ctk.CTk):
             msg = f"Community events: {res['count']} listed." + (f" {res['pruned']} removed." if res.get("pruned") else "")
             if say: say(msg)
             if self.gate.winfo_ismapped(): self.gate.show_dashboard(msg)
-    def sync_events(self, say, scope="nearby"):
+    def sync_events(self, say, scope="nearby", status_callback=None):
         """Load Ticketmaster listings near the user's ZIP or across their state."""
         u = self.gate.user or {}; key = events.load_cfg().get("ticketmaster_key", "")
-        if not key: return say("Paste your free Ticketmaster key first (use the Get a free key link).")
+        if not key:
+            if status_callback: status_callback("ticketmaster_key", "not_set", "Ticketmaster: key not set.")
+            return say("Ticketmaster key not set. Other configured sources will still refresh.")
         statewide = scope == "state"
-        if statewide and not u.get("state"): return say("Add a ZIP code to your account so we know which state to search.")
-        if not statewide and not u.get("lat"): return say("Sign in with an account that has a ZIP code so we know what is near you.")
+        if statewide and not u.get("state"):
+            if status_callback: status_callback("ticketmaster_key", "not_checked", "Ticketmaster needs a ZIP code to search by state.")
+            return say("Add a ZIP code to your account to search Ticketmaster events by state.")
+        if not statewide and not u.get("lat"):
+            if status_callback: status_callback("ticketmaster_key", "not_checked", "Ticketmaster needs a ZIP code for nearby events.")
+            return say("Sign in with an account that has a ZIP code to search nearby events.")
         search_label = f"all of {u['state']}" if statewide else "near you"
         say("Starting…")
         def work():
             try: res = events.sync(key, u.get("lat"), u.get("lng"), POSTERS, lambda s: self.uiq.put((say, (s,))), state_code=u.get("state") if statewide else None)
-            except Exception as e: return self.uiq.put((say, (f"Sync failed: {e}",)))
+            except urllib.error.HTTPError as e:
+                msg = "Ticketmaster rejected the key. Check the saved credential." if e.code in (401, 403) else f"Ticketmaster request failed (HTTP {e.code})."
+                if status_callback: status_callback("ticketmaster_key", "bad", msg)
+                return self.uiq.put((say, (msg,)))
+            except Exception as e:
+                if status_callback: status_callback("ticketmaster_key", "bad", f"Ticketmaster unavailable: {e}")
+                return self.uiq.put((say, (f"Ticketmaster sync failed: {e}",)))
+            if status_callback: status_callback("ticketmaster_key", "ok", "Ticketmaster connection working.")
             self.uiq.put((self.apply_sync, (res, search_label)))
         threading.Thread(target=work, daemon=True).start()
     def apply_sync(self, res, search_label="near you"):
@@ -997,18 +1113,21 @@ class App(ctk.CTk):
         if self.cat == "music" and self.sel is None:
             self.items = list(database.load_local_catalog("music"))
         self.gate.show_dashboard(f"Done: {res['music']} concerts/music events, {res['sports']} sports, and {res['festivals']} festivals and fairs found {search_label}.")
-    def sync_tmdb(self, say, token):
+    def sync_tmdb(self, say, token, status_callback=None):
         """Refresh the movie and on-air TV catalogs from TMDB in the background."""
         if not token:
-            return say("Paste your TMDB API Read Access Token, then choose Update All.")
+            if status_callback: status_callback("tmdb_key", "not_set", "TMDB key not set.")
+            return say("TMDB key not set. Other configured sources will still refresh.")
         say("Updating currently playing movies and on-air TV from TMDB…")
         def work():
             try:
                 catalogs = online.tmdb_catalog(token)
             except urllib.error.HTTPError as exc:
                 message = "TMDB rejected the token. Check it in the TMDB key field and try again." if exc.code in (401, 403) else f"TMDB update failed (HTTP {exc.code})."
+                if status_callback: status_callback("tmdb_key", "bad", message)
                 return self.uiq.put((say, (message,)))
             except Exception as exc:
+                if status_callback: status_callback("tmdb_key", "bad", f"TMDB unavailable: {exc}")
                 return self.uiq.put((say, (f"TMDB update failed: {exc}",)))
             for cat in ("movies", "tv"):
                 for result in catalogs.get(cat, []):
@@ -1016,8 +1135,67 @@ class App(ctk.CTk):
                     if result["poster"] and not os.path.exists(poster_path):
                         try: online._save(result["poster"], poster_path)
                         except Exception: pass
+            if status_callback: status_callback("tmdb_key", "ok", "TMDB connection working.")
             self.uiq.put((self.apply_tmdb, (catalogs, say)))
         threading.Thread(target=work, daemon=True).start()
+
+    def sync_watchmode(self, say, key, status_callback=None):
+        """Refresh bounded US movie and TV streaming catalogs with the local Watchmode key."""
+        if not key:
+            if status_callback: status_callback("watchmode_key", "not_set", "Watchmode key not set.")
+            return say("Watchmode key not set. Other configured sources will still refresh.")
+        say("Updating US streaming catalog from Watchmode…")
+        def work():
+            try:
+                online.watchmode_status(key)
+                catalogs = online.watchmode_catalog(key, page=1, limit=250)
+            except urllib.error.HTTPError as exc:
+                message = "Watchmode rejected the key. Check the saved credential." if exc.code in (401, 403) else f"Watchmode update failed (HTTP {exc.code})."
+                if status_callback: status_callback("watchmode_key", "bad", message)
+                return self.uiq.put((say, (message,)))
+            except Exception as exc:
+                if status_callback: status_callback("watchmode_key", "bad", f"Watchmode unavailable: {exc}")
+                return self.uiq.put((say, (f"Watchmode update failed: {exc}",)))
+            if status_callback: status_callback("watchmode_key", "ok", "Watchmode connection working.")
+            self.uiq.put((self.apply_watchmode, (catalogs, say)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_watchmode(self, catalogs, say=None):
+        """Store one bounded page per media type; source links are loaded on demand."""
+        now = int(time.time()); keep_ids = []; totals = {}
+        for cat, api_cat, sub in (("movies", "movies", "Movie"), ("tv", "tv", "TV Series")):
+            rows = catalogs.get(api_cat, []) or []; totals[api_cat] = len(rows)
+            for result in rows:
+                title = str(result.get("title") or result.get("name") or "").strip()
+                if not title: continue
+                genres = result.get("genres") or result.get("genre_names") or []
+                if isinstance(genres, str): genres = [part.strip() for part in genres.split(",") if part.strip()]
+                genre = genres[0] if genres else "Other"
+                year = str(result.get("year") or result.get("release_year") or "")[:4]
+                overview = result.get("plot_overview") or result.get("overview") or ""
+                rating = result.get("user_rating") or result.get("tmdb_rating") or 0
+                try: score = round(float(rating) * 10, 1)
+                except (TypeError, ValueError): score = 0
+                watch_id = result.get("id") or result.get("title_id")
+                if watch_id is None: continue
+                database.save_media_item("streaming", {
+                    "title": title, "sub": sub, "year": year, "url": "", "score": score,
+                    "desc": overview, "first_shown": year, "recent_shown": "Available to stream in the US",
+                    "srcs": ["Watchmode"],
+                })
+                keep_ids.append(database.media_id("streaming", title, sub))
+                meta = self.meta.d.setdefault(f"streaming|{title}", {})
+                meta.update({"genre": genre, "genres": genres, "watchmode_id": watch_id,
+                             "watchmode_type": result.get("type") or sub, "watchmode_catalog_at": now})
+                for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
+        pruned = database.prune_category_source("streaming", "Watchmode", keep_ids)
+        active = {f"streaming|{g(item, 'title')}" for item in database.load_local_catalog("streaming")}
+        for key in [key for key in self.meta.d if key.startswith("streaming|") and key not in active]: self.meta.d.pop(key, None)
+        self.meta.save()
+        message = f"Watchmode refreshed: {totals.get('movies', 0)} movies and {totals.get('tv', 0)} TV series listed; {pruned} stale items removed."
+        if say: say(message)
+        if self.cat == "streaming" and self.sel is None: self.items = list(database.load_local_catalog("streaming")); self.show_genres()
+        if self.gate.winfo_ismapped(): self.gate.show_dashboard(message)
     def apply_tmdb(self, catalogs, say=None):
         now = int(time.time()); added = {"movies": 0, "tv": 0}; updated = {"movies": 0, "tv": 0}
         for cat in ("movies", "tv"):

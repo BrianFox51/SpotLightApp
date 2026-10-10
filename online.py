@@ -1,7 +1,7 @@
 """Spotlight online helpers (no API keys): artwork, video/audio previews and buy links from Apple's iTunes Search API (movies, TV, music)
 and the Steam store (games), plus cast / artist biographies and photos from Wikipedia. Results are cached on disk; fetch() and person()
 raise on network failure so the caller can simply retry next time."""
-import os, re, json, urllib.request, urllib.parse
+import os, re, json, urllib.request, urllib.parse, urllib.error
 
 UA = {"User-Agent": "SpotlightApp/1.0 (desktop media dashboard; https://mythicmaskworks.com)"}
 
@@ -241,6 +241,36 @@ def tmdb_catalog(key):
             })
         catalogs[cat] = items
     return catalogs
+
+
+def _watchmode(path, key, **params):
+    """Make an authenticated Watchmode request without putting the key in the URL."""
+    url = "https://api.watchmode.com/v1" + path
+    if params:
+        url += "?" + _q(**params)
+    headers = {**UA, "X-API-Key": key}
+    return _json(url, headers)
+
+
+def watchmode_status(key):
+    """Check the Watchmode credential and return its free monthly quota (zero credits)."""
+    return _watchmode("/status/", key)
+
+
+def watchmode_catalog(key, page=1, limit=250):
+    """Fetch one US page each of popular streaming movies and TV series."""
+    output = {"movies": [], "tv": []}
+    for category, provider_type in (("movies", "movie"), ("tv", "tv_series")):
+        payload = _watchmode("/list-titles/", key, types=provider_type, regions="US",
+                             source_types="sub,free,rent,buy", sort_by="popularity_desc",
+                             page=page, limit=limit)
+        output[category] = payload.get("titles", [])
+    return output
+
+
+def watchmode_sources(key, title_id, region="US"):
+    """Look up US streaming providers for a Watchmode title ID."""
+    return _watchmode(f"/title/{urllib.parse.quote(str(title_id), safe='')}/sources/", key, regions=region)
 
 
 def wikidata_credits(title, year="", cat="movies"):

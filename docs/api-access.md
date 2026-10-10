@@ -68,10 +68,30 @@ Official references:
 - [Ticketmaster getting started and rate limits](https://developer.ticketmaster.com/products-and-docs/apis/getting-started/)
 - [Ticketmaster Partner API access](https://developer.ticketmaster.com/products-and-docs/apis/partner/)
 
+## Watchmode
+
+### Current status
+
+The dashboard's **Refresh** action checks the Watchmode key and loads a bounded first page of U.S. movies and TV series currently available through subscription, free, rental, or purchase services. The Streaming category shows these separately from theatrical movies and broadcast TV. The API manager shows a gray unchecked square before a check, a green check after a successful response, and a red mark after an authentication or request failure. A saved key by itself remains gray until Refresh checks it.
+
+The catalog request loads up to 250 movies and 250 TV series (two list-page credits per refresh). Opening a title requests its U.S. service links on demand (one additional credit) and reuses the cached result for up to 30 days. Users can browse the cached catalog 25 items at a time. Watchmode artwork URLs are not used; the app uses its own generated artwork. Service links open the provider's own page when Watchmode supplies a URL.
+
+### Planned use and access
+
+Watchmode's API supports movie/TV title search, paginated title lists, and per-title streaming sources. The free Developer plan is explicitly non-commercial and has a monthly credit allowance and country limits. The API can return subscription, free, rental, and purchase availability; detail/source requests consume credits, so the integration uses bounded pages, local caching, and on-demand source lookups rather than loading the full catalog repeatedly.
+
+Use the key only for the current non-commercial beta. Before monetization or a public release under a different model, recheck Watchmode's live plan terms and obtain the appropriate license. For a distributed desktop app, avoid shipping a shared key inside the application; this beta manager stores a user-provided key in the local Spotlight config file.
+
+Official references:
+
+- [Watchmode API documentation](https://api.watchmode.com/docs)
+- [Watchmode plans and credits](https://api.watchmode.com/)
+- [Watchmode API terms](https://api.watchmode.com/tc)
+
 ## Other active sources
 
 - Apple Search/iTunes endpoints and Steam store endpoints are used by `online.py` for product metadata, artwork, preview clips, and purchase links. Music previews use a matching music-video preview when available; otherwise a song preview plays over the waveform. These are previews, not full-track playback. The app caches preview media in the user's `%USERPROFILE%\\.spotlight\\media\\videos` folder. Starting muted and changing the sound requires VLC playback support from `requirements-optional.txt` plus the VLC desktop application.
-- The dashboard's **Update All** action uses the TMDB Read Access Token to load the first page of U.S. movies currently in theaters and TV shows airing in the next seven days. It saves title, overview, rating, genre, poster, and TMDB link to the local catalog; opening a title loads extended details and cast.
+- The dashboard's **Refresh** action saves edited API credentials, then refreshes TMDB's first page of U.S. movies currently in theaters and TV shows airing in the next seven days, Watchmode's bounded U.S. streaming catalog, and Ticketmaster events for the selected area. TMDB results save title, overview, rating, genre, poster, and TMDB link to the local catalog; opening a title loads extended details and cast. Ticketmaster refresh requires a signed-in account with a ZIP code. Watchmode availability loads per title when a streaming item is opened.
 - Wikipedia/Wikidata are used for biographies, article summaries, and fallback credits.
 - ZIP-to-location lookup uses Zippopotam.us. The startup connection indicator checks Google connectivity.
 - The community feed is a user-configured JSON URL; the curator tool can write `events.json` for hosting, such as from a GitHub raw-content URL.
@@ -80,4 +100,4 @@ These integrations need their own source attribution, caching, terms, and error-
 
 ## Local setup file
 
-The current API settings belong in `%USERPROFILE%\.spotlight\config.json`, not in this repository. A future setup flow should explain where to obtain each key, validate it without exposing it in errors, and save it in the user profile. A committed template may show key names only, never real credentials.
+The current API settings belong in `%USERPROFILE%\.spotlight\config.json`, not in this repository. The dashboard API Key Manager includes Ticketmaster, TMDB, Watchmode, and clearly marked optional Spotify/YouTube fields. The Spotify and YouTube fields are placeholders and are not wired into app behavior. Apple Search, Steam Store, Wikipedia, and Wikidata currently do not need user-supplied keys. A committed template may show key names only, never real credentials.
