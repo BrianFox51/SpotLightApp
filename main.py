@@ -46,13 +46,13 @@ def _copy_legacy_cache(folder):
 for _cache_name in ("posters", "backdrops", "people"):
     _copy_legacy_cache(_cache_name)
 BG, PANEL, CARD, HOVER = "#0b0b11", "#12121a", "#1a1a26", "#28283e"
-NAV = [("music", "🎵", "Concerts & Music"), ("movies", "🎬", "Cinema Feeds"), ("tv", "📺", "TV Networks"), ("streaming", "▶", "Streaming"), ("games", "🎮", "Gaming Hub"), ("sports", "🏆", "Sports & Events"), ("festivals", "🎪", "Festivals & Fairs")]
+NAV = [("music", "🎵", "Concerts & Music"), ("movies", "🎬", "Cinema Feeds"), ("tv", "📺", "TV Networks"), ("games", "🎮", "Gaming Hub"), ("sports", "🏆", "Sports & Events"), ("festivals", "🎪", "Festivals & Fairs")]
 ACC = {"music": (214, 64, 190), "movies": (226, 72, 58), "tv": (36, 182, 196), "streaming": (40, 190, 170), "games": (84, 214, 108), "sports": (255, 140, 40), "festivals": (150, 110, 255)}
 FXK = {"music": "music", "movies": "movies", "tv": "tv", "streaming": "tv", "games": "games", "sports": "tv", "festivals": "music"}
 TAG = {"music": "Upcoming concerts & music events", "movies": "Now showing", "tv": "TV airing this week", "streaming": "Movies and TV currently available to stream in the US", "games": "Playing now", "sports": "Upcoming events", "festivals": "Happening soon"}
 UNIT = {"music": "event", "sports": "event", "festivals": "event"}
 GENRES = {"music": [("Pop", "🎤"), ("Hip-Hop", "🎧"), ("Rock", "🎸"), ("Electronic", "🎛️"), ("R&B", "💜"), ("Country", "🤠"), ("Latin", "💃"), ("Jazz", "🎷"), ("Other", "🎼")],
-          "movies": [("Action", "💥"), ("Drama", "🎭"), ("Comedy", "😂"), ("Sci-Fi", "🚀"), ("Horror", "👻"), ("Thriller", "🔪"), ("Animation", "✏️"), ("Indie", "🎞️")],
+          "movies": [("Action", "💥"), ("Drama", "🎭"), ("Comedy", "😂"), ("Sci-Fi", "🚀"), ("Horror", "👻"), ("Thriller", "🔪"), ("Animation", "✏️"), ("Romance", "💕"), ("Indie", "🎞️")],
           "tv": [("Drama", "🎭"), ("Comedy", "😂"), ("Sci-Fi", "🚀"), ("Reality", "📡"), ("Docs", "🌍"), ("Animation", "✏️")],
           "games": [("Action", "⚔️"), ("RPG", "🐉"), ("Strategy", "♟️"), ("Shooter", "🎯"), ("Indie", "🕹️"), ("Sports", "🏆")],
           "sports": [("Baseball", "⚾"), ("Basketball", "🏀"), ("Football", "🏈"), ("Hockey", "🏒"), ("Soccer", "⚽"), ("Golf", "⛳"), ("Tennis", "🎾"), ("Racing", "🏁"), ("MMA & Boxing", "🥊"),
@@ -322,9 +322,9 @@ class Stage(tk.Canvas):
             n = len(self.lines[0]); txt(24, h - 74, self.lines[0], 24 if n <= 22 else 18 if n <= 34 else 14); txt(26, h - 16, self.lines[1], 18, "#f3f4f8", "sw", False)
 
 class Tip:
-    """Hover tooltip drawn as a plain label inside the main window (no extra OS windows, so no blank !toplevel boxes)."""
-    def __init__(s, w, text):
-        s.w, s.text, s.lbl, s.job = w, text, None, None
+    """Show a readable, accent-framed category name beside a hovered navigation icon."""
+    def __init__(s, w, text, accent="#c9a45c"):
+        s.w, s.text, s.accent, s.lbl, s.job = w, text, accent, None, None
         w.bind("<Enter>", s.schedule, add="+"); w.bind("<Leave>", s.hide, add="+"); w.bind("<Button-1>", s.hide, add="+")
     def schedule(s, e=None):
         if s.job is None and s.lbl is None: s.job = s.w.after(300, s.show)
@@ -332,8 +332,15 @@ class Tip:
         s.job = None
         if s.lbl is not None or not s.w.winfo_exists(): return
         root = s.w.winfo_toplevel()
-        s.lbl = tk.Label(root, text=s.text, bg="#000000", fg="white", font=("Segoe UI", 12, "bold"), padx=12, pady=6)
-        s.lbl.place(x=s.w.winfo_rootx() - root.winfo_rootx() + s.w.winfo_width() + 10, y=s.w.winfo_rooty() - root.winfo_rooty() + s.w.winfo_height() // 2 - 16); s.lbl.lift()
+        s.lbl = tk.Label(root, text="✦  " + s.text.upper(), bg="#171722", fg=s.accent,
+                         font=("Segoe UI", 14, "bold"), padx=16, pady=9,
+                         highlightthickness=2, highlightbackground=s.accent, highlightcolor=s.accent)
+        x = s.w.winfo_rootx() - root.winfo_rootx() + s.w.winfo_width() + 12
+        y = s.w.winfo_rooty() - root.winfo_rooty() + s.w.winfo_height() // 2 - 20
+        s.lbl.update_idletasks()
+        if x + s.lbl.winfo_reqwidth() > root.winfo_width():
+            x = max(4, s.w.winfo_rootx() - root.winfo_rootx() - s.lbl.winfo_reqwidth() - 12)
+        s.lbl.place(x=x, y=max(4, y)); s.lbl.lift()
     def hide(s, e=None):
         if s.job is not None:
             try: s.w.after_cancel(s.job)
@@ -354,6 +361,7 @@ class App(ctk.CTk):
         self.meta, self.cat, self.genre, self.items, self.sel, self.imgs, self.cards, self.online, self._rs = Meta(), "music", None, [], None, [], {}, None, None
         database.prune_expired_watchmode(int(time.time()) - 30 * 86400)
         self._prune_watchmode_metadata()
+        self._migrate_watchmode_catalog()
         self.page = 0; self.search_job = None; self.search_active = False; self.search_results = []; self.search_query = ""
         self.uiq, self.sel_cat, self.pinned, self._hj, self._bio = queue.Queue(), None, False, None, None
         self.cast_all = self._tproc = None
@@ -388,11 +396,17 @@ class App(ctk.CTk):
         cutoff = int(time.time()) - 30 * 86400
         changed = False
         for key, value in list(self.meta.d.items()):
-            if not key.startswith("streaming|") or not isinstance(value, dict):
+            if not (key.startswith("streaming|") or key.startswith("movies|") or key.startswith("tv|")) or not isinstance(value, dict):
+                continue
+            if not value.get("watchmode_catalog") and not key.startswith("streaming|"):
                 continue
             catalog_time = int(value.get("watchmode_catalog_at", 0) or 0)
             if catalog_time and catalog_time < cutoff:
-                self.meta.d.pop(key, None); changed = True
+                if key.startswith("streaming|"):
+                    self.meta.d.pop(key, None)
+                else:
+                    for field in [field for field in value if field.startswith("watchmode_")]: value.pop(field, None)
+                changed = True
                 continue
             sources_time = int(value.get("watchmode_sources_at", 0) or 0)
             if sources_time and sources_time < cutoff:
@@ -402,8 +416,35 @@ class App(ctk.CTk):
         if changed:
             self.meta.save()
 
+    def _migrate_watchmode_catalog(self):
+        """Move pre-existing Watchmode catalog rows out of the old standalone section."""
+        for item in database.load_local_catalog("streaming"):
+            title = g(item, "title")
+            old_meta = dict(self.meta.get("streaming", title))
+            target = "tv" if g(item, "sub") == "TV Series" else "movies"
+            database.save_media_item(target, {
+                "title": title, "sub": "Streaming", "year": g(item, "year"), "url": g(item, "url"),
+                "score": g(item, "score", 0), "desc": g(item, "description"),
+                "first_shown": g(item, "first_shown"), "recent_shown": g(item, "recent_shown"), "srcs": ["Watchmode"],
+            })
+            target_meta = self.meta.d.setdefault(f"{target}|{title}", {})
+            for field, value in old_meta.items():
+                if field.startswith("watchmode_"): target_meta[field] = value
+            if old_meta.get("genre"): target_meta["watchmode_genre"] = old_meta["genre"]
+            target_meta["watchmode_catalog"] = True
+            database.delete_item(g(item, "id"))
+        if any(key.startswith("streaming|") for key in self.meta.d):
+            for key in [key for key in self.meta.d if key.startswith("streaming|")]: self.meta.d.pop(key, None)
+            self.meta.save()
+
+    def is_watchmode_item(self, item, category=None):
+        category = category or g(item, "category", self.cat)
+        return g(item, "sub") == "Streaming" and bool(self.meta.get(category, g(item, "title")).get("watchmode_catalog"))
+
     def genre_of(self, it):
         metadata = self.meta.get(self.cat, g(it, "title"))
+        if self.cat in {"movies", "tv"} and self.is_watchmode_item(it, self.cat):
+            return metadata.get("watchmode_genre") or "Other"
         genre = metadata.get("music_genre") if self.cat == "music" else None
         genre = genre or metadata.get("genre", "Other")
         # Older live listings stored their event type in this field.
@@ -436,9 +477,11 @@ class App(ctk.CTk):
         self.navbtn = {}
         hb = ctk.CTkButton(rail, text="🏠", width=60, height=52, corner_radius=14, font=("Segoe UI Emoji", 25), fg_color="transparent", hover_color=HOVER, command=lambda: self.gate.show_dashboard())
         hb.pack(pady=(10, 2), padx=12); Tip(hb, "Dashboard")
+        self.nav_tips = []
         for key, ico, name in NAV:
             b = ctk.CTkButton(rail, text=ico, width=60, height=52, corner_radius=14, font=("Segoe UI Emoji", 25), fg_color="transparent", hover_color=HOVER, command=lambda k=key: self.click_cat(k))
             b.pack(pady=(10, 2), padx=12); self.navbtn[key] = b; b.bind("<Enter>", lambda e, k=key: self.hover_open(k), add="+"); b.bind("<Leave>", self.hover_leave, add="+")
+            self.nav_tips.append(Tip(b, name, hexc(ACC[key])))
         pb = ctk.CTkButton(rail, text="📣  Promote\nyour event", width=140, height=64, corner_radius=14,
                            font=("Segoe UI", 14, "bold"), fg_color="#9b6a1c", hover_color="#c48a2a",
                            command=self.open_promote)
@@ -472,8 +515,18 @@ class App(ctk.CTk):
         self.notes = ctk.CTkTextbox(nb, height=110, fg_color=CARD); self.notes.pack(fill="x", pady=4)
         ctk.CTkButton(nb, text="Save notes", command=self.save_notes).pack(anchor="e", pady=4)
     def section(self, label):
-        ctk.CTkLabel(self.detail, text=label, font=("Segoe UI", 20, "bold"), anchor="w").pack(fill="x", padx=20, pady=(22, 6))
-        f = ctk.CTkFrame(self.detail, fg_color="transparent"); f.pack(fill="x", padx=20); return f
+        heading = ctk.CTkLabel(self.detail, text=label, font=("Segoe UI", 20, "bold"), anchor="w")
+        heading.pack(fill="x", padx=20, pady=(22, 6))
+        f = ctk.CTkFrame(self.detail, fg_color="transparent"); f.pack(fill="x", padx=20)
+        f.section_heading = heading
+        return f
+    def set_section_visible(self, frame, visible, before=None):
+        heading = frame.section_heading
+        if visible:
+            if not heading.winfo_manager(): heading.pack(fill="x", padx=20, pady=(22, 6), before=before.section_heading if before else None)
+            if not frame.winfo_manager(): frame.pack(fill="x", padx=20, before=before.section_heading if before else None)
+        else:
+            heading.pack_forget(); frame.pack_forget()
     def on_resize(self, e=None):
         if self._rs: self.after_cancel(self._rs)
         def go():
@@ -493,9 +546,12 @@ class App(ctk.CTk):
                 if self.about_label is not None and self.about_label.winfo_exists():
                     about_text = self.about_label.cget("text")
                     self.about_label.configure(wraplength=text_width, height=wrapped_height(self.insp, about_text, 15, text_width))
+                if getattr(self, "artist_bio_label", None) is not None and self.artist_bio_label.winfo_exists():
+                    artist_text = self.artist_bio_label.cget("text")
+                    self.artist_bio_label.configure(wraplength=text_width, height=wrapped_height(self.insp, artist_text, 15, text_width))
                 for label in self.event_detail_labels:
                     if label.winfo_exists():
-                        event_width = max(180, self.insp._reverse_widget_scaling(iw) - 390)
+                        event_width = max(180, self.insp._reverse_widget_scaling(iw) - 80)
                         label.configure(wraplength=event_width, height=wrapped_height(self.insp, label.cget("text"), 15, event_width))
         self._rs = self.after(150, go)
 
@@ -635,7 +691,7 @@ class App(ctk.CTk):
         self.genre = None; self.back.pack_forget(); self.feed_title.configure(text="Events" if self.cat in UNIT else "Genres")
         for w in self.list.winfo_children(): w.destroy()
         self.reset_list_scroll()
-        cnt = {}
+        cnt = {}; tile_positions = {}
         if self.cat == "music":
             for item in self.items:
                 for label in (self.genre_of(item), self.music_type_of(item)):
@@ -653,12 +709,27 @@ class App(ctk.CTk):
                 if count:
                     tiles.append((name, "🎭", count))
         else:
-            for it in self.items: cnt[self.genre_of(it)] = cnt.get(self.genre_of(it), 0) + 1
+            catalog_items = [it for it in self.items if not self.is_watchmode_item(it, self.cat)] if self.cat in {"movies", "tv"} else self.items
+            for it in catalog_items: cnt[self.genre_of(it)] = cnt.get(self.genre_of(it), 0) + 1
             tiles = ([ ("All", "⭐", len(self.items)) ] if self.items else [])
             tiles.extend((n, ic, cnt.get(n, 0)) for n, ic in GENRES[self.cat] if cnt.get(n, 0))
             known_genres = {name for name, _icon in GENRES[self.cat]}
             icon = "🎬" if self.cat == "movies" else "📺"
             tiles.extend((name, icon, count) for name, count in sorted(cnt.items()) if name not in known_genres)
+            if self.cat in {"movies", "tv"}:
+                streaming_count = sum(1 for it in self.items if self.is_watchmode_item(it, self.cat))
+                if streaming_count:
+                    stream_tile = ("Streaming", "▶", streaming_count)
+                    romance_tile = next((tile for tile in tiles if tile[0] == "Romance"), None)
+                    if self.cat == "movies" and romance_tile:
+                        tiles.remove(romance_tile)
+                        pair_index = len(tiles)
+                        tiles.extend((romance_tile, stream_tile))
+                        pair_row = (pair_index + 1) // 2
+                        tile_positions[pair_index] = (pair_row, 0)
+                        tile_positions[pair_index + 1] = (pair_row, 1)
+                    else:
+                        tiles.append(stream_tile)
         if not tiles:
             empty = "No events have been found in this section yet." if self.cat in UNIT else "No items have been saved in this section yet."
             ctk.CTkLabel(self.list, text=empty + "\nTry Spotlight Search above or sync events from the dashboard.",
@@ -667,7 +738,7 @@ class App(ctk.CTk):
         for i, (n, ic, c) in enumerate(tiles):
             display_name = n.replace(" & ", " &\n") if len(n) > 15 and " & " in n else n.replace(" ", "\n", 1) if len(n) > 15 else n
             ctk.CTkButton(self.list, text=f"{ic}  {display_name}\n{c} {UNIT.get(self.cat, 'title')}{'s' if c != 1 else ''}", height=92, corner_radius=16, font=("Segoe UI", 15, "bold"),
-                          fg_color=hexc(ACC[self.cat], 0.32 + 0.05 * (i % 5)), hover_color=hexc(ACC[self.cat], 0.75), command=lambda n=n: self.pick_genre(n)).grid(row=i // 2, column=i % 2, padx=5, pady=5, sticky="ew")
+                          fg_color=hexc(ACC[self.cat], 0.32 + 0.05 * (i % 5)), hover_color=hexc(ACC[self.cat], 0.75), command=lambda n=n: self.pick_genre(n)).grid(row=tile_positions.get(i, (i // 2, i % 2))[0], column=tile_positions.get(i, (i // 2, i % 2))[1], padx=5, pady=5, sticky="ew")
     def show_feed(self, genre):
         self.search_active = False
         self.genre = genre; self.back.pack(side="left", before=self.feed_title); self.feed_title.configure(text=f"{genre} · {TAG[self.cat]}" if genre != "All" else TAG[self.cat])
@@ -679,9 +750,13 @@ class App(ctk.CTk):
                     (genre in {"Bands & Live Shows", "Music Festivals"} and self.music_type_of(item) == genre) or
                     self.genre_of(item) == genre]
         else:
-            if self.cat == "streaming" and genre in {"Movies", "TV Series"}:
+            if self.cat in {"movies", "tv"} and genre == "Streaming":
+                rows = [item for item in self.items if self.is_watchmode_item(item, self.cat)]
+            elif self.cat == "streaming" and genre in {"Movies", "TV Series"}:
                 wanted = "Movie" if genre == "Movies" else "TV Series"
                 rows = [item for item in self.items if g(item, "sub") == wanted]
+            elif self.cat in {"movies", "tv"} and genre != "All":
+                rows = [item for item in self.items if not self.is_watchmode_item(item, self.cat) and self.genre_of(item) == genre]
             else:
                 rows = [item for item in self.items if genre == "All" or self.genre_of(item) == genre]
         rows.sort(key=lambda item: -float(g(item, "score", 0) or 0))
@@ -757,7 +832,7 @@ class App(ctk.CTk):
             for item in database.load_local_catalog(category):
                 metadata = self.meta.get(category, g(item, "title"))
                 searchable = online._norm(" ".join((g(item, "title"), sub_of(item), g(item, "description"),
-                                                       g(item, "year"), metadata.get("genre", ""), metadata.get("music_genre", ""),
+                                                       g(item, "year"), metadata.get("genre", ""), metadata.get("watchmode_genre", ""), metadata.get("music_genre", ""),
                                                        metadata.get("music_type", ""), metadata.get("music_artist", ""))))
                 if not all(term in searchable for term in terms):
                     continue
@@ -867,11 +942,12 @@ class App(ctk.CTk):
             card_category = self.shown[k].get("_search_category", self.cat)
             card.configure(fg_color=hexc(ACC[card_category], 0.35) if k == n else CARD)
         self.render_detail(it)
-        if category == "streaming": self.fetch_watchmode_sources(it)
+        if category == "streaming" or self.is_watchmode_item(it, category): self.fetch_watchmode_sources(it)
         else: self.fetch_online(it)
-        if self.auto_var.get() and self.meta.get(category, g(it, "title")).get("yt_id"): self.play_trailer()
+        if self.auto_var.get() and not self.is_watchmode_item(it, category) and self.meta.get(category, g(it, "title")).get("yt_id"): self.play_trailer()
     def render_detail(self, it):
         cat = self.sel_cat; acc = ACC[cat]; title = g(it, "title"); m = self.meta.get(cat, title); city = (self.gate.user or {}).get("city", "") if hasattr(self, "gate") else ""
+        is_streaming = cat == "streaming" or self.is_watchmode_item(it, cat)
         vid = m.get("video") if m.get("video") and os.path.exists(m["video"]) else self.find_video(title)
         if cat == "music":
             vid = m.get("music_video") if m.get("music_video") and os.path.exists(m["music_video"]) else vid
@@ -879,7 +955,7 @@ class App(ctk.CTk):
         else:
             audio = None
         bp = os.path.join(BACKDROPS, slug(title) + ".jpg"); still = Image.open(bp).convert("RGB") if os.path.exists(bp) and not vid else None
-        if cat == "streaming":
+        if is_streaming:
             self.theater.play(None, FXK[cat], acc, None, (title, f"STREAMING AVAILABILITY · US  ·  {sub_of(it)}"), still=still)
         elif cat == "music" and vid:
             self.theater.play(vid, "wave", acc, None, (title, f"MUSIC VIDEO PREVIEW · muted · {sub_of(it)}"), still=None)
@@ -888,41 +964,52 @@ class App(ctk.CTk):
         else:
             self.theater.play(vid, "wave" if cat == "music" else FXK[cat], acc, None,
                               (title, ("TRAILER · muted loop" if vid else ("▶ click to play the trailer" if m.get("yt_id") else ("WAVEFORM" if cat == "music" else "Trailer loading…"))) + f"  ·  {sub_of(it)}"), still=still)
-        self.theater.on_click = self.toggle_sound if cat == "music" and self.theater.vlc_on else self.play_trailer if m.get("yt_id") else None
+        self.theater.on_click = self.toggle_sound if cat == "music" and self.theater.vlc_on else self.play_trailer if m.get("yt_id") and not is_streaming else None
         self.theater.configure(cursor="hand2" if self.theater.on_click else "")
         ps = (300, 300) if cat == "music" else (250, 375); self.poster.configure(image=ctk.CTkImage(art(title, acc, (ps[0] * 2, ps[1] * 2)), size=ps)); self.poster.pack(side="left", anchor="n", padx=(0, 12), before=self.theater)
         for b in (self.find_btn, self.trailer_btn, self.mute_btn, self.buy_btn): b.pack_forget()
-        if cat == "streaming":
+        if is_streaming:
             pass
         elif m.get("yt_id"): self.trailer_btn.pack(side="left", padx=8)
         else: self.find_btn.pack(side="left", padx=8)
         if self.theater.vlc_on: self.mute_btn.configure(text="🔊  Unmute" if self.theater.muted else "🔇  Mute"); self.mute_btn.pack(side="left", padx=8)
         if m.get("buy_url"): self.buy_btn.configure(text="🛒  " + m.get("buy_label", "Buy / Rent")); self.buy_btn.pack(side="left", padx=8)
         extra = "   •   ".join(x for x in (m.get("rated"), m.get("runtime")) if x)
-        lead = ("🤝 Community listing   •   " if m.get("community") else "") + f"📅 {g(it, 'recent_shown')}" if cat in UNIT else ("Available to stream in the U.S." if cat == "streaming" else f"★ {g(it, 'score')}   •   First: {g(it, 'first_shown')}   •   Latest: {g(it, 'recent_shown')}")
+        lead = ("🤝 Community listing   •   " if m.get("community") else "") + f"📅 {g(it, 'recent_shown')}" if cat in UNIT else ("Available to stream in the U.S." if is_streaming else f"★ {g(it, 'score')}   •   First: {g(it, 'first_shown')}   •   Latest: {g(it, 'recent_shown')}")
         self.title.configure(text=f"{title} ({g(it, 'year')})" if g(it, "year") else title)
         self.meta_lbl.configure(text=f"{sub_of(it)}   •   {self.genre_of(it)}   •   {lead}" + (f"   •   {extra}" if extra else ""))
-        self.desc.configure(text=g(it, "description")); self.render_cast(it)
+        self.cast_row.section_heading.configure(text="🎤  Artist / Musician" if cat == "music" else "👥  Cast & Crew")
+        desc_text = " ".join(str(g(it, "description") or "").split())
+        if cat == "music":
+            desc_text = re.sub(r"([A-Z]{2,})([A-Z][a-z])", r"\1 \2", desc_text)
+            desc_text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", desc_text)
+        self.desc.configure(text=desc_text); self.render_cast(it)
         for w in self.about_box.winfo_children(): w.destroy()
         about = m.get("about")
         detail_width = max(180, self.insp._reverse_widget_scaling(self.insp.winfo_width()) - 40)
-        self.about_label = ctk.CTkLabel(self.about_box, text=about or "Extended details load from the web the first time you open a title (needs internet).", font=("Segoe UI", 15), text_color="#cfd3e0" if about else "#888",
-                                         justify="left", anchor="w", wraplength=detail_width)
-        self.about_label.pack(fill="x")
+        self.about_label = None
+        about_widgets = []
+        if about:
+            self.about_label = ctk.CTkLabel(self.about_box, text=" ".join(str(about).split()), font=("Segoe UI", 15), text_color="#cfd3e0",
+                                             justify="left", anchor="w", wraplength=detail_width)
+            self.about_label.pack(fill="x"); about_widgets.append(self.about_label)
         if m.get("about_url"): ctk.CTkButton(self.about_box, text="Read more on Wikipedia", fg_color=CARD, hover_color=HOVER, command=lambda u=m["about_url"]: webbrowser.open(u)).pack(anchor="w", pady=6)
+        if m.get("about_url"): about_widgets.append(self.about_box.winfo_children()[-1])
         if m.get("tmdb_url"):
             ctk.CTkButton(self.about_box, text="Full cast, crew & details on TMDB", fg_color=CARD, hover_color=HOVER, command=lambda u=m["tmdb_url"]: webbrowser.open(u)).pack(anchor="w", pady=2)
             ctk.CTkLabel(self.about_box, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#777", font=("Segoe UI", 11)).pack(anchor="w")
-        if cat == "streaming":
-            ctk.CTkLabel(self.about_box, text="Streaming availability in the United States", font=("Segoe UI", 17, "bold"), anchor="w").pack(fill="x", pady=(14, 5))
+            about_widgets.extend(self.about_box.winfo_children()[-2:])
+        if is_streaming:
+            ctk.CTkLabel(self.about_box, text="Streaming availability in the United States", font=("Segoe UI", 17, "bold"), anchor="w").pack(fill="x", pady=(14, 5)); about_widgets.append(self.about_box.winfo_children()[-1])
             sources = m.get("watchmode_sources")
             if sources is None:
                 text = m.get("watchmode_sources_error") or "Add a Watchmode API key on the dashboard and select Refresh to load provider availability."
-                ctk.CTkLabel(self.about_box, text=text, text_color="#9aa0b5", anchor="w", justify="left", wraplength=detail_width).pack(fill="x")
+                ctk.CTkLabel(self.about_box, text=text, text_color="#9aa0b5", anchor="w", justify="left", wraplength=detail_width).pack(fill="x"); about_widgets.append(self.about_box.winfo_children()[-1])
             elif not sources:
-                ctk.CTkLabel(self.about_box, text="No US streaming services were returned for this title.", text_color="#9aa0b5", anchor="w").pack(fill="x")
+                ctk.CTkLabel(self.about_box, text="No US streaming services were returned for this title.", text_color="#9aa0b5", anchor="w").pack(fill="x"); about_widgets.append(self.about_box.winfo_children()[-1])
             else:
                 source_row = ctk.CTkFrame(self.about_box, fg_color="transparent"); source_row.pack(fill="x", pady=(2, 4))
+                about_widgets.append(source_row)
                 for source in sources:
                     name = source.get("name") or "Streaming service"
                     kind = source.get("type") or ""
@@ -934,23 +1021,29 @@ class App(ctk.CTk):
                                       command=lambda link=url: webbrowser.open(link)).pack(anchor="w", fill="x", pady=2)
                     else:
                         ctk.CTkLabel(source_row, text=label, text_color="#cfd3e0", anchor="w").pack(fill="x", pady=2)
-            ctk.CTkLabel(self.about_box, text="Availability powered by Watchmode.", text_color="#777", font=("Segoe UI", 11)).pack(anchor="w", pady=(4, 0))
+            ctk.CTkLabel(self.about_box, text="Availability powered by Watchmode.", text_color="#777", font=("Segoe UI", 11)).pack(anchor="w", pady=(4, 0)); about_widgets.append(self.about_box.winfo_children()[-1])
+        self.set_section_visible(self.about_box, bool(about_widgets), before=self.notes.master if hasattr(self.notes, "master") else None)
         for w in self.ev_box.winfo_children(): w.destroy()
         self.event_detail_labels = []
-        evs = [] if cat == "streaming" else database.load_details(g(it, "id"))[1]
-        if not evs and cat != "streaming":
+        evs = [] if is_streaming else database.load_details(g(it, "id"))[1]
+        if not evs and not is_streaming:
             ctk.CTkLabel(self.ev_box, text="No saved dates yet. Search ticket vendors:", text_color="#888").pack(anchor="w"); self.vendor_row(self.ev_box, title, cat)
         for ev in evs:
             r = ctk.CTkFrame(self.ev_box, fg_color=CARD, corner_radius=12); r.pack(fill="x", pady=4)
-            event_width = max(180, self.insp._reverse_widget_scaling(self.insp.winfo_width()) - 390)
+            event_width = max(180, self.insp._reverse_widget_scaling(self.insp.winfo_width()) - 80)
             event_text = f"📍  {g(ev, 'venue_name')}\n{g(ev, 'event_time')}  ·  {g(ev, 'location_details')}"
             event_label = ctk.CTkLabel(r, text=event_text, font=("Segoe UI", 15), justify="left", anchor="w", wraplength=event_width,
                                        height=wrapped_height(self.insp, event_text, 15, event_width))
-            event_label.pack(side="left", fill="x", expand=True, padx=14, pady=10); self.event_detail_labels.append(event_label)
-            right = ctk.CTkFrame(r, fg_color="transparent"); right.pack(side="right", padx=10); real = g(ev, "purchase_url")
-            if real: ctk.CTkButton(right, text="🎟  Reserve / Buy Tickets", fg_color="#1E7A34", hover_color="#27a046", command=lambda u=real: webbrowser.open(u)).pack(side="left", padx=3)
-            for name, url in events.vendor_links(f"{title} {g(ev, 'venue_name')}" if cat != "sports" else title, cat)[: (2 if real else 3)]:
-                ctk.CTkButton(right, text=name, width=90, fg_color="#2a2a3c" if real else "#1E7A34", hover_color=HOVER, command=lambda u=url: webbrowser.open(u)).pack(side="left", padx=3)
+            event_label.pack(fill="x", padx=14, pady=(10, 4)); self.event_detail_labels.append(event_label)
+            right = ctk.CTkFrame(r, fg_color="transparent"); right.pack(fill="x", padx=10, pady=(0, 10)); real = g(ev, "purchase_url")
+            links = []
+            if real: links.append(("🎟  Reserve / Buy Tickets", real, "#1E7A34"))
+            links.extend((name, url, "#2a2a3c" if real else "#1E7A34") for name, url in events.vendor_links(f"{title} {g(ev, 'venue_name')}" if cat != "sports" else title, cat)[: (2 if real else 3)])
+            link_columns = max(1, min(3, int(max(1, event_width - 20) // 190)))
+            for col in range(min(link_columns, len(links))): right.grid_columnconfigure(col, weight=1)
+            for index, (label, url, color) in enumerate(links):
+                ctk.CTkButton(right, text=label, fg_color=color, hover_color=HOVER if color != "#1E7A34" else "#27a046",
+                              command=lambda u=url: webbrowser.open(u)).grid(row=index // link_columns, column=index % link_columns, padx=3, pady=2, sticky="ew")
         if self.tmdb_detail_image is not None and cat in {"movies", "tv"}:
             self.tmdb_notes_mark.pack(fill="x", pady=(0, 6), before=self.notes)
         else:
@@ -983,7 +1076,24 @@ class App(ctk.CTk):
             bind_all(c, lambda e, mem=mem: self.open_bio(mem))
     def render_cast(self, it):
         for w in self.cast_row.winfo_children(): w.destroy()
+        self.artist_bio_label = None
         rows = database.load_details(g(it, "id"))[0]; cast = [r for r in rows if not is_crew(g(r, "role_type"))]; crew = [r for r in rows if is_crew(g(r, "role_type"))]
+        meta = self.meta.get(self.sel_cat, g(it, "title"))
+        if self.sel_cat == "music":
+            artist = meta.get("music_artist") or sub_of(it)
+            if artist:
+                ctk.CTkLabel(self.cast_row, text=artist, font=("Segoe UI", 17, "bold"), anchor="w").pack(fill="x", pady=(0, 4))
+            for label, field in (("Label", "music_label"), ("Studio", "music_studio")):
+                if meta.get(field):
+                    ctk.CTkLabel(self.cast_row, text=f"{label}: {meta[field]}", text_color="#9aa0b5", anchor="w").pack(fill="x")
+            if meta.get("music_artist_about"):
+                bio_width = max(180, self.insp._reverse_widget_scaling(self.insp.winfo_width()) - 40)
+                self.artist_bio_label = ctk.CTkLabel(self.cast_row, text=" ".join(str(meta["music_artist_about"]).split()), font=("Segoe UI", 15), text_color="#cfd3e0",
+                                                     justify="left", anchor="w", wraplength=bio_width)
+                self.artist_bio_label.pack(fill="x", pady=(4, 0))
+                if meta.get("music_artist_url"):
+                    ctk.CTkButton(self.cast_row, text="Artist biography source", fg_color=CARD, hover_color=HOVER,
+                                  command=lambda u=meta["music_artist_url"]: webbrowser.open(u)).pack(anchor="w", pady=(4, 0))
         iid = g(it, "id"); more = self.cast_all == iid
         if cast: self.people_grid(self.cast_row, cast if more else cast[:12])
         if len(cast) > 12:
@@ -991,11 +1101,13 @@ class App(ctk.CTk):
                           command=lambda: (setattr(self, "cast_all", None if more else iid), self.render_cast(it))).pack(anchor="w", pady=6)
         if crew:
             ctk.CTkLabel(self.cast_row, text="Crew", font=("Segoe UI", 18, "bold"), anchor="w").pack(fill="x", pady=(14, 0)); self.people_grid(self.cast_row, crew)
+        self.set_section_visible(self.cast_row, bool(self.cast_row.winfo_children()), before=self.ev_box)
     def fetch_online(self, it):
         """Background: poster, backdrop, trailer, buy link, About text and the FULL cast/crew (with photos). Results return through self.uiq."""
         cat, title, sub, year, iid = self.sel_cat, g(it, "title"), sub_of(it), str(g(it, "year")), g(it, "id"); mm = self.meta.get(cat, title); key = events.load_cfg().get("tmdb_key", "")
         music_media_due = cat == "music" and not mm.get("music_media_v1") and time.time() - mm.get("music_media_try", 0) > 86400
-        need = (not mm.get("online_v3") and time.time() - mm.get("online_try", 0) > 86400 * 3) or bool(key and cat in ("movies", "tv") and not mm.get("tmdb_id") and time.time() - mm.get("tmdb_try", 0) > 3600) or music_media_due
+        artist_info_due = cat == "music" and bool(mm.get("music_artist") or sub_of(it)) and not mm.get("music_artist_v1") and time.time() - mm.get("music_artist_try", 0) > 86400
+        need = (not mm.get("online_v3") and time.time() - mm.get("online_try", 0) > 86400 * 3) or bool(key and cat in ("movies", "tv") and not mm.get("tmdb_id") and time.time() - mm.get("tmdb_try", 0) > 3600) or music_media_due or artist_info_due
         rows = database.load_details(iid)[0][:8]
         fresh = [g(x, "name") for x in rows if not os.path.exists(os.path.join(PEOPLE, slug(g(x, "name")) + ".jpg")) and online.cached_person(PEOPLE, g(x, "name")) is None]
         if not need and not fresh: return
@@ -1012,7 +1124,7 @@ class App(ctk.CTk):
 
     def fetch_watchmode_sources(self, item):
         """Load a title's US provider links once and cache non-image data for up to 30 days."""
-        title = g(item, "title"); meta = self.meta.get("streaming", title)
+        title = g(item, "title"); category = g(item, "category", self.sel_cat or self.cat); meta = self.meta.get(category, title)
         title_id = meta.get("watchmode_id")
         if not title_id: return
         checked = int(meta.get("watchmode_sources_at", 0) or 0)
@@ -1026,20 +1138,20 @@ class App(ctk.CTk):
                 if isinstance(sources, dict):
                     if sources.get("error"): raise RuntimeError(str(sources["error"]))
                     sources = sources.get("sources", [])
-                self.uiq.put((self.apply_watchmode_sources, (title, sources or None)))
+                self.uiq.put((self.apply_watchmode_sources, (category, title, sources or None)))
             except Exception as exc:
-                self.uiq.put((self.apply_watchmode_sources, (title, None, str(exc))))
+                self.uiq.put((self.apply_watchmode_sources, (category, title, None, str(exc))))
         threading.Thread(target=work, daemon=True).start()
 
-    def apply_watchmode_sources(self, title, sources, error=""):
+    def apply_watchmode_sources(self, category, title, sources, error=""):
         if error:
-            self.meta.put("streaming", title, watchmode_sources_error="Provider availability could not be loaded. Check the Watchmode connection and try again.", watchmode_sources_try=time.time())
+            self.meta.put(category, title, watchmode_sources_error="Provider availability could not be loaded. Check the Watchmode connection and try again.", watchmode_sources_try=time.time())
             if hasattr(self.gate, "update_api_status"):
                 self.gate.update_api_status("watchmode_key", "bad", "Watchmode provider lookup failed; the saved key may be invalid or the service unavailable.")
-            if self.sel is not None and self.sel_cat == "streaming" and g(self.sel, "title") == title: self.render_detail(self.sel)
+            if self.sel is not None and self.sel_cat == category and g(self.sel, "title") == title: self.render_detail(self.sel)
             return
-        self.meta.put("streaming", title, watchmode_sources=sources or [], watchmode_sources_at=int(time.time()), watchmode_sources_try=0, watchmode_sources_error="")
-        if self.sel is not None and self.sel_cat == "streaming" and g(self.sel, "title") == title:
+        self.meta.put(category, title, watchmode_sources=sources or [], watchmode_sources_at=int(time.time()), watchmode_sources_try=0, watchmode_sources_error="")
+        if self.sel is not None and self.sel_cat == category and g(self.sel, "title") == title:
             self.render_detail(self.sel)
     def apply_online(self, cat, title, res, ppl, iid):
         if res is not None:
@@ -1048,7 +1160,7 @@ class App(ctk.CTk):
             self.meta.put(cat, title, **({"online_v3": True, **res} if res else {"online_try": time.time()}))
             if events.load_cfg().get("tmdb_key") and cat in ("movies", "tv") and not res.get("tmdb_id"): self.meta.put(cat, title, tmdb_try=time.time())
         else:
-            self.meta.put(cat, title, online_try=time.time(), music_media_try=time.time())
+            self.meta.put(cat, title, online_try=time.time(), music_media_try=time.time(), music_artist_try=time.time())
         for k in [k for k in _ART if k[0] == title]: del _ART[k]
         if self.sel is not None and self.sel_cat == cat and g(self.sel, "title") == title:
             if res: self.render_detail(self.sel)
@@ -1162,8 +1274,8 @@ class App(ctk.CTk):
 
     def apply_watchmode(self, catalogs, say=None):
         """Store one bounded page per media type; source links are loaded on demand."""
-        now = int(time.time()); keep_ids = []; totals = {}
-        for cat, api_cat, sub in (("movies", "movies", "Movie"), ("tv", "tv", "TV Series")):
+        now = int(time.time()); keep_ids = {"movies": [], "tv": []}; totals = {}
+        for cat, api_cat in (("movies", "movies"), ("tv", "tv")):
             rows = catalogs.get(api_cat, []) or []; totals[api_cat] = len(rows)
             for result in rows:
                 title = str(result.get("title") or result.get("name") or "").strip()
@@ -1178,28 +1290,28 @@ class App(ctk.CTk):
                 except (TypeError, ValueError): score = 0
                 watch_id = result.get("id") or result.get("title_id")
                 if watch_id is None: continue
-                database.save_media_item("streaming", {
-                    "title": title, "sub": sub, "year": year, "url": "", "score": score,
+                database.save_media_item(cat, {
+                    "title": title, "sub": "Streaming", "year": year, "url": "", "score": score,
                     "desc": overview, "first_shown": year, "recent_shown": "Available to stream in the US",
                     "srcs": ["Watchmode"],
                 })
-                keep_ids.append(database.media_id("streaming", title, sub))
-                meta = self.meta.d.setdefault(f"streaming|{title}", {})
-                meta.update({"genre": genre, "genres": genres, "watchmode_id": watch_id,
-                             "watchmode_type": result.get("type") or sub, "watchmode_catalog_at": now})
+                keep_ids[cat].append(database.media_id(cat, title, "Streaming"))
+                meta = self.meta.d.setdefault(f"{cat}|{title}", {})
+                meta.update({"watchmode_genre": genre, "watchmode_genres": genres, "watchmode_id": watch_id, "watchmode_catalog": True,
+                             "watchmode_type": result.get("type") or ("Movie" if cat == "movies" else "TV Series"), "watchmode_catalog_at": now})
                 for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
-        pruned = database.prune_category_source("streaming", "Watchmode", keep_ids)
-        active = {f"streaming|{g(item, 'title')}" for item in database.load_local_catalog("streaming")}
-        for key in [key for key in self.meta.d if key.startswith("streaming|") and key not in active]: self.meta.d.pop(key, None)
+        pruned = sum(database.prune_category_source(cat, "Watchmode", keep_ids[cat]) for cat in ("movies", "tv"))
+        for key in [key for key in self.meta.d if key.startswith("streaming|")]: self.meta.d.pop(key, None)
         self.meta.save()
         message = f"Watchmode refreshed: {totals.get('movies', 0)} movies and {totals.get('tv', 0)} TV series listed; {pruned} stale items removed."
         if say: say(message)
-        if self.cat == "streaming" and self.sel is None: self.items = list(database.load_local_catalog("streaming")); self.show_genres()
+        if self.cat in {"movies", "tv"} and self.sel is None:
+            self.items = list(database.load_local_catalog(self.cat)); self.show_genres()
         if self.gate.winfo_ismapped(): self.gate.show_dashboard(message)
     def apply_tmdb(self, catalogs, say=None):
         now = int(time.time()); added = {"movies": 0, "tv": 0}; updated = {"movies": 0, "tv": 0}
         for cat in ("movies", "tv"):
-            existing = {g(item, "title").casefold(): item for item in database.load_local_catalog(cat)}
+            existing = {g(item, "title").casefold(): item for item in database.load_local_catalog(cat) if not self.is_watchmode_item(item, cat)}
             for result in catalogs.get(cat, []):
                 title = result["title"]
                 old = existing.get(title.casefold())

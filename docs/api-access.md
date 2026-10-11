@@ -72,7 +72,7 @@ Official references:
 
 ### Current status
 
-The dashboard's **Refresh** action checks the Watchmode key and loads a bounded first page of U.S. movies and TV series currently available through subscription, free, rental, or purchase services. The Streaming category shows these separately from theatrical movies and broadcast TV. The API manager shows a gray unchecked square before a check, a green check after a successful response, and a red mark after an authentication or request failure. A saved key by itself remains gray until Refresh checks it.
+The dashboard's **Refresh** action checks the Watchmode key and loads a bounded first page of U.S. movies and TV series currently available through subscription, free, rental, or purchase services. Watchmode movies appear in Cinema Feeds and Watchmode series appear in TV Networks, each under a dedicated **Streaming** subcategory that keeps them distinct from theatrical and broadcast listings. The API manager shows a gray unchecked square before a check, a green check after a successful response, and a red mark after an authentication or request failure. A saved key by itself remains gray until Refresh checks it.
 
 The catalog request loads up to 250 movies and 250 TV series (two list-page credits per refresh). Opening a title requests its U.S. service links on demand (one additional credit) and reuses the cached result for up to 30 days. Users can browse the cached catalog 25 items at a time. Watchmode artwork URLs are not used; the app uses its own generated artwork. Service links open the provider's own page when Watchmode supplies a URL.
 

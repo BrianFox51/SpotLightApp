@@ -253,7 +253,8 @@ def prune_expired_watchmode(cutoff):
     """Delete Watchmode catalog rows older than the Free plan's 30-day cache window."""
     conn = sqlite3.connect(DB_PATH)
     gone = [row[0] for row in conn.execute(
-        "SELECT id FROM media_items WHERE category = 'streaming' AND last_updated < ?", (cutoff,)
+        "SELECT id FROM media_items WHERE category IN ('streaming', 'movies', 'tv') AND sources LIKE ? AND last_updated < ?",
+        ('%"Watchmode"%', cutoff)
     ).fetchall()]
     conn.close()
     for media_id_value in gone:

@@ -115,6 +115,12 @@ def fetch(cat, title, sub, year, poster_dir, video_dir, slug, tmdb_key="", backd
     if wk:
         out["about"], out["about_url"] = wk["about"][:2500], wk["url"]
         if not poster_url and wk["thumb"]: poster_url = wk["thumb"]
+    if cat == "music" and artist:
+        try:
+            artist_wiki = wiki_find(artist, ("musician", "band"))
+            if artist_wiki: out["music_artist_about"], out["music_artist_url"] = artist_wiki["about"][:2500], artist_wiki["url"]
+        except Exception: pass
+        out["music_artist_v1"] = True
     if not out.get("about") and tm and tm.get("about"): out["about"] = tm["about"]
     if credits is None and cat in ("movies", "tv"):
         try: credits = wikidata_credits(title, year, cat)
