@@ -16,6 +16,8 @@ API_FIELDS = (
     ("ticketmaster_key", "Ticketmaster Discovery", "API key · live events", "https://developer.ticketmaster.com/products-and-docs/apis/getting-started/", "active"),
     ("tmdb_key", "TMDB", "Read Access Token or v3 API key · movies and TV", "https://www.themoviedb.org/settings/api", "active"),
     ("watchmode_key", "Watchmode", "API key · US streaming catalog and availability", "https://api.watchmode.com/", "active"),
+    ("igdb_client_id", "IGDB / Twitch Client ID", "Client ID · popular and upcoming game catalog", "https://dev.twitch.tv/console/apps", "active"),
+    ("igdb_client_secret", "IGDB / Twitch Client Secret", "Client secret · keep private; used to request IGDB access", "https://dev.twitch.tv/console/apps", "active"),
     ("spotify_client_id", "Spotify (planned)", "Client ID · optional future music integration", "https://developer.spotify.com/dashboard", "planned"),
     ("spotify_client_secret", "Spotify (planned)", "Client secret · optional future music integration", "https://developer.spotify.com/dashboard", "planned"),
     ("youtube_api_key", "YouTube Data API (optional)", "API key · not currently used by Spotlight", "https://console.cloud.google.com/", "planned"),
@@ -188,6 +190,10 @@ class Gate(ctk.CTkFrame):
             ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD).pack(pady=(16, 0))
             ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5").pack()
         cfg = events.load_cfg(); live = ctk.CTkFrame(p, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
+        def saved_api_value(name, source):
+            if name == "igdb_client_secret":
+                return local_secrets.unprotect_text(source.get("igdb_client_secret_dpapi", "")) or source.get(name, "")
+            return source.get(name, "")
         ctk.CTkLabel(live, text="🌐  Spotlight data sources", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
         area_row = ctk.CTkFrame(live, fg_color="transparent"); area_row.pack(anchor="w", padx=14, pady=(6, 2))
         ctk.CTkLabel(area_row, text="Search area", text_color="#9aa0b5").pack(side="left", padx=(0, 8))
@@ -203,6 +209,7 @@ class Gate(ctk.CTkFrame):
             s.app.sync_tmdb(s.say, current.get("tmdb_key", ""), report)
             s.app.sync_events(s.say, "state" if area.get() == state_choice and state_choice else "nearby", report)
             s.app.sync_watchmode(s.say, current.get("watchmode_key", ""), report)
+            s.app.sync_igdb(s.say, current.get("igdb_client_id", ""), saved_api_value("igdb_client_secret", current), report)
 
         ctk.CTkButton(area_row, text="🔄  Refresh", width=125, command=refresh_all).pack(side="left", padx=(10, 0))
 
@@ -218,7 +225,7 @@ class Gate(ctk.CTkFrame):
             ctk.CTkLabel(left, text=label + suffix, font=("Segoe UI", 13, "bold"), anchor="w").pack(fill="x")
             ctk.CTkLabel(left, text=hint, text_color="#9aa0b5", font=("Segoe UI", 10), anchor="w").pack(fill="x")
             status = cfg.get("api_statuses", {}).get(api_key, {})
-            state = status.get("state", "not_set" if not cfg.get(api_key) else "not_checked")
+            state = status.get("state", "not_set" if not saved_api_value(api_key, cfg) else "not_checked")
             status_color = {"ok": "#45b86b", "bad": "#df4c55", "not_set": "#a8aab2", "not_checked": "#a8aab2", "planned": "#a8aab2"}.get(state, "#a8aab2")
             status_label = ctk.CTkLabel(api_row, text="✓" if state == "ok" else ("×" if state == "bad" else "□"),
                                         width=28, font=("Segoe UI", 19, "bold"), text_color=status_color)
@@ -226,7 +233,7 @@ class Gate(ctk.CTkFrame):
             s.api_status_widgets[api_key] = status_label
             entry = ctk.CTkEntry(api_row, width=230, show="•", placeholder_text="Paste credential here")
             entry.pack(side="right", padx=(8, 2), pady=4)
-            if cfg.get(api_key): entry.insert(0, cfg[api_key])
+            if saved_api_value(api_key, cfg): entry.insert(0, saved_api_value(api_key, cfg))
             key_entries[api_key] = entry
         ctk.CTkLabel(manager, text="Edit a saved key by replacing its field, or clear the field to remove it. Use Show keys to inspect saved values.",
                      text_color="#9aa0b5", font=("Segoe UI", 10), wraplength=520, justify="left").pack(fill="x", padx=12, pady=(8, 2))
@@ -235,10 +242,21 @@ class Gate(ctk.CTkFrame):
 
         def save_api_keys():
             current = events.load_cfg()
-            old_values = {name: current.get(name, "") for name in key_entries}
-            current.update({name: entry.get().strip() for name, entry in key_entries.items()})
+            old_values = {name: saved_api_value(name, current) for name in key_entries}
+            new_values = {name: entry.get().strip() for name, entry in key_entries.items()}
+            for name, value in new_values.items():
+                if name == "igdb_client_secret":
+                    protected = local_secrets.protect_text(value)
+                    if protected:
+                        current["igdb_client_secret_dpapi"] = protected
+                        current.pop(name, None)
+                    else:
+                        current[name] = value
+                        current.pop("igdb_client_secret_dpapi", None)
+                else:
+                    current[name] = value
             statuses = current.setdefault("api_statuses", {})
-            for name, value in ((name, entry.get().strip()) for name, entry in key_entries.items()):
+            for name, value in new_values.items():
                 if old_values.get(name, "") != value:
                     state = "not_checked" if value else "not_set"
                     statuses[name] = {"state": state, "message": "Credential changed; refresh to check." if value else "No credential saved."}
@@ -293,6 +311,8 @@ class Gate(ctk.CTkFrame):
                       command=lambda: webbrowser.open("https://www.themoviedb.org/settings/api")).pack(side="left")
         ctk.CTkButton(event_row, text="Watchmode", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
                       command=lambda: webbrowser.open("https://api.watchmode.com/")).pack(side="left")
+        ctk.CTkButton(event_row, text="IGDB / Twitch", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
+                      command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps")).pack(side="left")
         s.status = ctk.CTkLabel(live, text=status or "Credentials stay in this PC's local Spotlight settings. □ not checked   ✓ working   × needs attention",
                                 text_color="#9aa0b5", font=("Segoe UI", 11), wraplength=560, justify="center"); s.status.pack(pady=(0, 4))
         ctk.CTkLabel(live, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#9aa0b5", font=("Segoe UI", 11)).pack(pady=(0, 10))

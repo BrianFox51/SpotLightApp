@@ -2,6 +2,7 @@
 and the Steam store (games), plus cast / artist biographies and photos from Wikipedia. Results are cached on disk; fetch() and person()
 raise on network failure so the caller can simply retry next time."""
 import os, re, json, urllib.request, urllib.parse, urllib.error
+import time
 
 UA = {"User-Agent": "SpotlightApp/1.0 (desktop media dashboard; https://mythicmaskworks.com)"}
 
@@ -277,6 +278,58 @@ def watchmode_catalog(key, page=1, limit=250):
 def watchmode_sources(key, title_id, region="US"):
     """Look up US streaming providers for a Watchmode title ID."""
     return _watchmode(f"/title/{urllib.parse.quote(str(title_id), safe='')}/sources/", key, regions=region)
+
+
+def _igdb_token(client_id, client_secret):
+    """Request a short-lived Twitch app token for IGDB; never persist the token."""
+    body = urllib.parse.urlencode({"client_id": client_id, "client_secret": client_secret,
+                                   "grant_type": "client_credentials"}).encode("ascii")
+    request = urllib.request.Request("https://id.twitch.tv/oauth2/token", data=body,
+                                     headers={**UA, "Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8", "replace"))
+
+
+def _igdb_query(endpoint, client_id, token, query):
+    """Send an APICalypse query to one IGDB v4 endpoint."""
+    request = urllib.request.Request(
+        "https://api.igdb.com/v4/" + endpoint,
+        data=query.encode("utf-8"),
+        headers={**UA, "Client-ID": client_id, "Authorization": "Bearer " + token,
+                 "Content-Type": "text/plain"},
+    )
+    with urllib.request.urlopen(request, timeout=25) as response:
+        return json.loads(response.read().decode("utf-8", "replace"))
+
+
+def igdb_catalog(client_id, client_secret, limit=100):
+    """Fetch popular and upcoming games plus the IGDB genre/platform dictionaries.
+
+    Results are deliberately capped to keep Refresh responsive. The client secret
+    is exchanged for an in-memory app token and is never written to the config.
+    """
+    auth = _igdb_token(client_id.strip(), client_secret.strip())
+    token = auth.get("access_token")
+    if not token:
+        raise ValueError("Twitch did not return an IGDB access token.")
+    now = int(time.time())
+    fields = "id,name,slug,summary,first_release_date,rating,rating_count,genres.name,platforms.name,cover.url,involved_companies.company.name,involved_companies.developer,involved_companies.publisher"
+    # IGDB allows four requests per second. Keep a small interval between calls.
+    queries = (
+        # `category` is deprecated in current IGDB data and filtering it to 0
+        # can return an empty catalog. Exclude editions with version_parent.
+        ("popular", f"fields {fields}; where version_parent = null & rating_count > 0; sort rating_count desc; limit {int(limit)};"),
+        ("upcoming", f"fields {fields}; where version_parent = null & first_release_date > {now}; sort first_release_date asc; limit {int(limit)};"),
+    )
+    catalogs = {}
+    for name, query in queries:
+        if catalogs: time.sleep(0.27)
+        catalogs[name] = _igdb_query("games", client_id, token, query)
+    time.sleep(0.27)
+    catalogs["genres"] = _igdb_query("genres", client_id, token, "fields name; limit 500;")
+    time.sleep(0.27)
+    catalogs["platforms"] = _igdb_query("platforms", client_id, token, "fields name,abbreviation; limit 500;")
+    return catalogs
 
 
 def wikidata_credits(title, year="", cat="movies"):

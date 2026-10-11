@@ -443,6 +443,8 @@ class App(ctk.CTk):
 
     def genre_of(self, it):
         metadata = self.meta.get(self.cat, g(it, "title"))
+        if self.cat == "games" and metadata.get("igdb_genres"):
+            return metadata["igdb_genres"][0]
         if self.cat in {"movies", "tv"} and self.is_watchmode_item(it, self.cat):
             return metadata.get("watchmode_genre") or "Other"
         genre = metadata.get("music_genre") if self.cat == "music" else None
@@ -730,6 +732,12 @@ class App(ctk.CTk):
                         tile_positions[pair_index + 1] = (pair_row, 1)
                     else:
                         tiles.append(stream_tile)
+            if self.cat == "games":
+                game_tiles = []
+                for label, icon in (("Popular", "🔥"), ("Upcoming", "🗓️")):
+                    count = sum(1 for item in self.items if self.meta.get("games", g(item, "title")).get("igdb_" + label.lower()))
+                    if count: game_tiles.append((label, icon, count))
+                tiles[1:1] = game_tiles
         if not tiles:
             empty = "No events have been found in this section yet." if self.cat in UNIT else "No items have been saved in this section yet."
             ctk.CTkLabel(self.list, text=empty + "\nTry Spotlight Search above or sync events from the dashboard.",
@@ -750,7 +758,9 @@ class App(ctk.CTk):
                     (genre in {"Bands & Live Shows", "Music Festivals"} and self.music_type_of(item) == genre) or
                     self.genre_of(item) == genre]
         else:
-            if self.cat in {"movies", "tv"} and genre == "Streaming":
+            if self.cat == "games" and genre in {"Popular", "Upcoming"}:
+                rows = [item for item in self.items if self.meta.get("games", g(item, "title")).get("igdb_" + genre.lower())]
+            elif self.cat in {"movies", "tv"} and genre == "Streaming":
                 rows = [item for item in self.items if self.is_watchmode_item(item, self.cat)]
             elif self.cat == "streaming" and genre in {"Movies", "TV Series"}:
                 wanted = "Movie" if genre == "Movies" else "TV Series"
@@ -977,7 +987,9 @@ class App(ctk.CTk):
         extra = "   •   ".join(x for x in (m.get("rated"), m.get("runtime")) if x)
         lead = ("🤝 Community listing   •   " if m.get("community") else "") + f"📅 {g(it, 'recent_shown')}" if cat in UNIT else ("Available to stream in the U.S." if is_streaming else f"★ {g(it, 'score')}   •   First: {g(it, 'first_shown')}   •   Latest: {g(it, 'recent_shown')}")
         self.title.configure(text=f"{title} ({g(it, 'year')})" if g(it, "year") else title)
-        self.meta_lbl.configure(text=f"{sub_of(it)}   •   {self.genre_of(it)}   •   {lead}" + (f"   •   {extra}" if extra else ""))
+        platforms = self.meta.get(cat, title).get("igdb_platforms", []) if cat == "games" else []
+        platform_text = "   •   Platforms: " + ", ".join(platforms[:5]) if platforms else ""
+        self.meta_lbl.configure(text=f"{sub_of(it)}   •   {self.genre_of(it)}   •   {lead}" + platform_text + (f"   •   {extra}" if extra else ""))
         self.cast_row.section_heading.configure(text="🎤  Artist / Musician" if cat == "music" else "👥  Cast & Crew")
         desc_text = " ".join(str(g(it, "description") or "").split())
         if cat == "music":
@@ -1271,6 +1283,110 @@ class App(ctk.CTk):
             if status_callback: status_callback("watchmode_key", "ok", "Watchmode connection working.")
             self.uiq.put((self.apply_watchmode, (catalogs, say)))
         threading.Thread(target=work, daemon=True).start()
+
+    def sync_igdb(self, say, client_id, client_secret, status_callback=None):
+        """Validate IGDB credentials and refresh a bounded popular/upcoming game catalog."""
+        def report(state, message):
+            if status_callback:
+                status_callback("igdb_client_id", state, message)
+                status_callback("igdb_client_secret", state, message)
+        if not client_id or not client_secret:
+            report("not_set", "IGDB needs both a Twitch Client ID and Client Secret; other sources will still refresh.")
+            return say("IGDB needs both Twitch credentials. Other configured sources will still refresh.")
+        say("Updating popular and upcoming games from IGDB…")
+        def work():
+            try:
+                catalogs = online.igdb_catalog(client_id, client_secret, limit=100)
+                game_count = sum(len(catalogs.get(name, []) or []) for name in ("popular", "upcoming"))
+                if not game_count:
+                    message = "IGDB credentials work, but the game queries returned no titles. Check the IGDB app access and try Refresh again."
+                    report("bad", message)
+                    return self.uiq.put((say, (message,)))
+                # Download covers in the worker so the desktop UI stays responsive.
+                cover_jobs = {}
+                for result in (catalogs.get("popular", []) or []) + (catalogs.get("upcoming", []) or []):
+                    cover = (result.get("cover") or {}).get("url") or ""
+                    title = str(result.get("name") or "").strip()
+                    if cover and title:
+                        cover = "https:" + cover if cover.startswith("//") else cover
+                        cover_jobs[os.path.join(POSTERS, slug(title) + ".jpg")] = cover.replace("t_thumb", "t_cover_big")
+                def download_cover(job):
+                    path, url = job
+                    if not os.path.exists(path):
+                        try: online._save(url, path, timeout=15)
+                        except Exception: pass
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                    list(pool.map(download_cover, cover_jobs.items()))
+            except urllib.error.HTTPError as exc:
+                message = "IGDB rejected the Twitch credentials. Check the Client ID and Client Secret." if exc.code in (400, 401, 403) else f"IGDB update failed (HTTP {exc.code})."
+                report("bad", message)
+                return self.uiq.put((say, (message,)))
+            except Exception as exc:
+                report("bad", f"IGDB unavailable: {exc}")
+                return self.uiq.put((say, (f"IGDB update failed: {exc}",)))
+            report("ok", "IGDB credentials working; catalog data loaded.")
+            self.uiq.put((self.apply_igdb_safely, (catalogs, say, report)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_igdb_safely(self, catalogs, say, report):
+        """Keep a malformed IGDB result from stopping the UI queue silently."""
+        try:
+            self.apply_igdb(catalogs, say)
+        except Exception as exc:
+            message = f"IGDB returned data, but Spotlight could not save it: {exc}"
+            report("bad", message)
+            if say: say(message)
+
+    def apply_igdb(self, catalogs, say=None):
+        """Save IGDB popular/upcoming titles and expose their genre/platform metadata."""
+        now = int(time.time()); merged = {}
+        for feed_name in ("popular", "upcoming"):
+            for result in catalogs.get(feed_name, []) or []:
+                title = str(result.get("name") or "").strip()
+                if not title: continue
+                row = merged.setdefault(title.casefold(), {"result": result, "popular": False, "upcoming": False})
+                row[feed_name] = True
+                if feed_name == "popular" and not row.get("result", {}).get("rating") and result.get("rating"):
+                    row["result"] = result
+        genres_index = {int(row["id"]): row.get("name", "") for row in catalogs.get("genres", []) if row.get("id") is not None}
+        platforms_index = {int(row["id"]): row.get("name") or row.get("abbreviation", "") for row in catalogs.get("platforms", []) if row.get("id") is not None}
+        counts = {"popular": 0, "upcoming": 0}
+        existing_games = {g(item, "title").casefold(): item for item in database.load_local_catalog("games")}
+        for entry in merged.values():
+            result = entry["result"]; title = str(result.get("name") or "").strip()
+            release_ts = result.get("first_release_date")
+            try:
+                release_date = time.strftime("%b %d, %Y", time.localtime(int(release_ts))) if release_ts else ""
+                year = time.strftime("%Y", time.localtime(int(release_ts))) if release_ts else "TBA"
+            except (TypeError, ValueError, OSError): release_date, year = "", "TBA"
+            genre_ids = result.get("genres") or []; platform_ids = result.get("platforms") or []
+            genres = [genres_index.get(int(value), "") if isinstance(value, (int, float)) else str(value.get("name") or "") for value in genre_ids]
+            platforms = [platforms_index.get(int(value), "") if isinstance(value, (int, float)) else str(value.get("name") or "") for value in platform_ids]
+            genres = list(dict.fromkeys(value for value in genres if value)) or ["Other"]
+            platforms = list(dict.fromkeys(value for value in platforms if value))
+            company = next(((link.get("company") or {}).get("name", "") for link in result.get("involved_companies", []) if link.get("developer")), "")
+            company = company or next(((link.get("company") or {}).get("name", "") for link in result.get("involved_companies", []) if link.get("publisher")), "") or "IGDB"
+            rating = result.get("rating") or 0
+            try: score = round(float(rating), 1)
+            except (TypeError, ValueError): score = 0
+            first_label = release_date or "Release date TBA"
+            flags = "Popular on IGDB" if entry["popular"] else "Upcoming release"
+            sub = g(existing_games.get(title.casefold()), "sub") or company
+            database.save_media_item("games", {"title": title, "sub": sub, "year": year, "url": "https://www.igdb.com/games/" + str(result.get("slug") or ""),
+                "score": score, "desc": result.get("summary") or "", "first_shown": first_label, "recent_shown": flags, "srcs": ["IGDB"]})
+            metadata = self.meta.d.setdefault(f"games|{title}", {})
+            metadata.update({"igdb_id": result.get("id"), "igdb_genres": genres, "igdb_platforms": platforms,
+                             "igdb_popular": entry["popular"], "igdb_upcoming": entry["upcoming"], "igdb_catalog_at": now})
+            counts["popular"] += int(entry["popular"]); counts["upcoming"] += int(entry["upcoming"])
+            for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
+        self.meta.save()
+        total = len(merged)
+        message = f"IGDB refreshed: {counts['popular']} popular and {counts['upcoming']} upcoming games; {total} unique titles with genre and platform data."
+        if say: say(message)
+        if self.cat == "games" and self.sel is None:
+            self.items = list(database.load_local_catalog("games")); self.show_genres()
+        if self.gate.winfo_ismapped(): self.gate.show_dashboard(message)
 
     def apply_watchmode(self, catalogs, say=None):
         """Store one bounded page per media type; source links are loaded on demand."""
