@@ -313,7 +313,7 @@ def igdb_catalog(client_id, client_secret, limit=100):
     if not token:
         raise ValueError("Twitch did not return an IGDB access token.")
     now = int(time.time())
-    fields = "id,name,slug,summary,first_release_date,rating,rating_count,genres.name,platforms.name,cover.url,involved_companies.company.name,involved_companies.developer,involved_companies.publisher"
+    fields = "id,name,slug,summary,first_release_date,rating,rating_count,genres.name,platforms.name,cover.url,screenshots.url,videos.video_id,involved_companies.company.name,involved_companies.developer,involved_companies.publisher"
     # IGDB allows four requests per second. Keep a small interval between calls.
     queries = (
         # `category` is deprecated in current IGDB data and filtering it to 0

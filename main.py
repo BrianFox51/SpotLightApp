@@ -954,7 +954,8 @@ class App(ctk.CTk):
         self.render_detail(it)
         if category == "streaming" or self.is_watchmode_item(it, category): self.fetch_watchmode_sources(it)
         else: self.fetch_online(it)
-        if self.auto_var.get() and not self.is_watchmode_item(it, category) and self.meta.get(category, g(it, "title")).get("yt_id"): self.play_trailer()
+        selected_meta = self.meta.get(category, g(it, "title"))
+        if self.auto_var.get() and not self.is_watchmode_item(it, category) and (selected_meta.get("yt_id") or selected_meta.get("igdb_video_id")): self.play_trailer()
     def render_detail(self, it):
         cat = self.sel_cat; acc = ACC[cat]; title = g(it, "title"); m = self.meta.get(cat, title); city = (self.gate.user or {}).get("city", "") if hasattr(self, "gate") else ""
         is_streaming = cat == "streaming" or self.is_watchmode_item(it, cat)
@@ -964,7 +965,15 @@ class App(ctk.CTk):
             audio = m.get("music_audio") if m.get("music_audio") and os.path.exists(m["music_audio"]) else self.find_audio(title)
         else:
             audio = None
-        bp = os.path.join(BACKDROPS, slug(title) + ".jpg"); still = Image.open(bp).convert("RGB") if os.path.exists(bp) and not vid else None
+        bp = os.path.join(BACKDROPS, slug(title) + ".jpg")
+        # Games often have a Steam screenshot but no playable trailer. Use the cover as
+        # a second-choice still so the wide preview remains title-specific while media loads.
+        if cat == "games" and not os.path.exists(bp):
+            poster_path = next((os.path.join(POSTERS, slug(title) + ext) for ext in (".jpg", ".png")
+                                if os.path.exists(os.path.join(POSTERS, slug(title) + ext))), None)
+            if poster_path: bp = poster_path
+        try: still = Image.open(bp).convert("RGB") if os.path.exists(bp) and not vid else None
+        except Exception: still = None
         if is_streaming:
             self.theater.play(None, FXK[cat], acc, None, (title, f"STREAMING AVAILABILITY · US  ·  {sub_of(it)}"), still=still)
         elif cat == "music" and vid:
@@ -972,18 +981,20 @@ class App(ctk.CTk):
         elif cat == "music" and audio:
             self.theater.play_audio(audio, "wave", acc, (title, f"AUDIO PREVIEW · muted · {sub_of(it)}"))
         else:
+            trailer_id = m.get("yt_id") or (m.get("igdb_video_id") if cat == "games" else None)
             self.theater.play(vid, "wave" if cat == "music" else FXK[cat], acc, None,
-                              (title, ("TRAILER · muted loop" if vid else ("▶ click to play the trailer" if m.get("yt_id") else ("WAVEFORM" if cat == "music" else "Trailer loading…"))) + f"  ·  {sub_of(it)}"), still=still)
-        self.theater.on_click = self.toggle_sound if cat == "music" and self.theater.vlc_on else self.play_trailer if m.get("yt_id") and not is_streaming else None
+                              (title, ("TRAILER · muted loop" if vid else ("▶ click to play the trailer" if trailer_id else ("WAVEFORM" if cat == "music" else ("GAME ARTWORK · trailer unavailable" if cat == "games" else "Trailer loading…")))) + f"  ·  {sub_of(it)}"), still=still)
+        trailer_id = m.get("yt_id") or (m.get("igdb_video_id") if cat == "games" else None)
+        self.theater.on_click = self.toggle_sound if cat == "music" and self.theater.vlc_on else self.play_trailer if trailer_id and not is_streaming else None
         self.theater.configure(cursor="hand2" if self.theater.on_click else "")
         ps = (300, 300) if cat == "music" else (250, 375); self.poster.configure(image=ctk.CTkImage(art(title, acc, (ps[0] * 2, ps[1] * 2)), size=ps)); self.poster.pack(side="left", anchor="n", padx=(0, 12), before=self.theater)
         for b in (self.find_btn, self.trailer_btn, self.mute_btn, self.buy_btn): b.pack_forget()
         if is_streaming:
             pass
-        elif m.get("yt_id"): self.trailer_btn.pack(side="left", padx=8)
+        elif m.get("yt_id") or (cat == "games" and m.get("igdb_video_id")): self.trailer_btn.pack(side="left", padx=8)
         else: self.find_btn.pack(side="left", padx=8)
         if self.theater.vlc_on: self.mute_btn.configure(text="🔊  Unmute" if self.theater.muted else "🔇  Mute"); self.mute_btn.pack(side="left", padx=8)
-        if m.get("buy_url"): self.buy_btn.configure(text="🛒  " + m.get("buy_label", "Buy / Rent")); self.buy_btn.pack(side="left", padx=8)
+        if m.get("buy_url") and cat != "games": self.buy_btn.configure(text="🛒  " + m.get("buy_label", "Buy / Rent")); self.buy_btn.pack(side="left", padx=8)
         extra = "   •   ".join(x for x in (m.get("rated"), m.get("runtime")) if x)
         lead = ("🤝 Community listing   •   " if m.get("community") else "") + f"📅 {g(it, 'recent_shown')}" if cat in UNIT else ("Available to stream in the U.S." if is_streaming else f"★ {g(it, 'score')}   •   First: {g(it, 'first_shown')}   •   Latest: {g(it, 'recent_shown')}")
         self.title.configure(text=f"{title} ({g(it, 'year')})" if g(it, "year") else title)
@@ -991,6 +1002,7 @@ class App(ctk.CTk):
         platform_text = "   •   Platforms: " + ", ".join(platforms[:5]) if platforms else ""
         self.meta_lbl.configure(text=f"{sub_of(it)}   •   {self.genre_of(it)}   •   {lead}" + platform_text + (f"   •   {extra}" if extra else ""))
         self.cast_row.section_heading.configure(text="🎤  Artist / Musician" if cat == "music" else "👥  Cast & Crew")
+        self.ev_box.section_heading.configure(text="🛒  Where to Buy" if cat == "games" else "📍  Local Venues & Showtimes")
         desc_text = " ".join(str(g(it, "description") or "").split())
         if cat == "music":
             desc_text = re.sub(r"([A-Z]{2,})([A-Z][a-z])", r"\1 \2", desc_text)
@@ -1037,8 +1049,10 @@ class App(ctk.CTk):
         self.set_section_visible(self.about_box, bool(about_widgets), before=self.notes.master if hasattr(self.notes, "master") else None)
         for w in self.ev_box.winfo_children(): w.destroy()
         self.event_detail_labels = []
-        evs = [] if is_streaming else database.load_details(g(it, "id"))[1]
-        if not evs and not is_streaming:
+        evs = [] if is_streaming or cat == "games" else database.load_details(g(it, "id"))[1]
+        if cat == "games":
+            self.game_store_row(self.ev_box, title, m)
+        elif not evs and not is_streaming:
             ctk.CTkLabel(self.ev_box, text="No saved dates yet. Search ticket vendors:", text_color="#888").pack(anchor="w"); self.vendor_row(self.ev_box, title, cat)
         for ev in evs:
             r = ctk.CTkFrame(self.ev_box, fg_color=CARD, corner_radius=12); r.pack(fill="x", pady=4)
@@ -1056,6 +1070,8 @@ class App(ctk.CTk):
             for index, (label, url, color) in enumerate(links):
                 ctk.CTkButton(right, text=label, fg_color=color, hover_color=HOVER if color != "#1E7A34" else "#27a046",
                               command=lambda u=url: webbrowser.open(u)).grid(row=index // link_columns, column=index % link_columns, padx=3, pady=2, sticky="ew")
+        self.set_section_visible(self.ev_box, cat == "games" or bool(evs) or not is_streaming,
+                                 before=self.about_box if hasattr(self, "about_box") else None)
         if self.tmdb_detail_image is not None and cat in {"movies", "tv"}:
             self.tmdb_notes_mark.pack(fill="x", pady=(0, 6), before=self.notes)
         else:
@@ -1064,12 +1080,34 @@ class App(ctk.CTk):
     def vendor_row(self, parent, query, cat):
         r = ctk.CTkFrame(parent, fg_color="transparent"); r.pack(anchor="w", pady=4)
         for name, url in events.vendor_links(query, cat): ctk.CTkButton(r, text=f"🎟  {name}", width=120, fg_color="#1E7A34", hover_color="#27a046", command=lambda u=url: webbrowser.open(u)).pack(side="left", padx=4)
+    def game_store_row(self, parent, title, meta):
+        """Show the matched Steam product and title-search links for other game stores."""
+        row = ctk.CTkFrame(parent, fg_color="transparent"); row.pack(fill="x", pady=4)
+        stores = []
+        if meta.get("buy_url"):
+            stores.append((meta.get("buy_label", "Steam Store"), meta["buy_url"], "#1E7A34"))
+        q = urllib.parse.quote_plus(title)
+        if not meta.get("buy_url"):
+            stores.append(("Search Steam", f"https://store.steampowered.com/search/?term={q}", CARD))
+        stores.extend((name, url, CARD) for name, url in (
+            ("Search GOG", f"https://www.gog.com/en/games?query={q}"),
+            ("Search Epic Games", f"https://store.epicgames.com/en-US/browse?q={q}"),
+            ("Search PlayStation", f"https://store.playstation.com/en-us/search/{urllib.parse.quote(title, safe='')}"),
+            ("Search Xbox", f"https://www.xbox.com/en-US/search?q={q}"),
+            ("Search Nintendo", f"https://www.nintendo.com/us/search/#q={q}"),
+        ))
+        ctk.CTkLabel(parent, text="Store results depend on title availability, platform, and region.",
+                     text_color="#9aa0b5", anchor="w").pack(fill="x", pady=(0, 4))
+        for i, (label, url, color) in enumerate(stores):
+            row.grid_columnconfigure(i % 3, weight=1)
+            ctk.CTkButton(row, text=f"🛒  {label}", fg_color=color, hover_color=HOVER if color == CARD else "#27a046",
+                          command=lambda link=url: webbrowser.open(link)).grid(row=i // 3, column=i % 3, padx=3, pady=3, sticky="ew")
     def toggle_sound(self):
         self.mute_btn.configure(text="🔊  Unmute" if self.theater.toggle_mute() else "🔇  Mute")
     def play_trailer(self):
         """YouTube's own player in its own window (needs pywebview); otherwise the video opens in your browser."""
         if not self.sel: return
-        title = g(self.sel, "title"); vid = self.meta.get(self.sel_cat, title).get("yt_id")
+        title = g(self.sel, "title"); meta = self.meta.get(self.sel_cat, title); vid = meta.get("yt_id") or (meta.get("igdb_video_id") if self.sel_cat == "games" else None)
         if not vid: return self.find_online()
         if importlib.util.find_spec("webview"):
             try:
@@ -1303,14 +1341,24 @@ class App(ctk.CTk):
                     report("bad", message)
                     return self.uiq.put((say, (message,)))
                 # Download covers in the worker so the desktop UI stays responsive.
-                cover_jobs = {}
+                cover_jobs = {}; screenshot_jobs = {}
                 for result in (catalogs.get("popular", []) or []) + (catalogs.get("upcoming", []) or []):
                     cover = (result.get("cover") or {}).get("url") or ""
                     title = str(result.get("name") or "").strip()
                     if cover and title:
                         cover = "https:" + cover if cover.startswith("//") else cover
                         cover_jobs[os.path.join(POSTERS, slug(title) + ".jpg")] = cover.replace("t_thumb", "t_cover_big")
+                    shots = result.get("screenshots") or []
+                    shot = (shots[0].get("url") or "") if shots else ""
+                    if shot and title:
+                        shot = "https:" + shot if shot.startswith("//") else shot
+                        screenshot_jobs[os.path.join(BACKDROPS, slug(title) + ".jpg")] = shot.replace("t_thumb", "t_screenshot_big")
                 def download_cover(job):
+                    path, url = job
+                    if not os.path.exists(path):
+                        try: online._save(url, path, timeout=15)
+                        except Exception: pass
+                def download_screenshot(job):
                     path, url = job
                     if not os.path.exists(path):
                         try: online._save(url, path, timeout=15)
@@ -1318,6 +1366,7 @@ class App(ctk.CTk):
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
                     list(pool.map(download_cover, cover_jobs.items()))
+                    list(pool.map(download_screenshot, screenshot_jobs.items()))
             except urllib.error.HTTPError as exc:
                 message = "IGDB rejected the Twitch credentials. Check the Client ID and Client Secret." if exc.code in (400, 401, 403) else f"IGDB update failed (HTTP {exc.code})."
                 report("bad", message)
@@ -1378,6 +1427,9 @@ class App(ctk.CTk):
             metadata = self.meta.d.setdefault(f"games|{title}", {})
             metadata.update({"igdb_id": result.get("id"), "igdb_genres": genres, "igdb_platforms": platforms,
                              "igdb_popular": entry["popular"], "igdb_upcoming": entry["upcoming"], "igdb_catalog_at": now})
+            videos = result.get("videos") or []
+            if videos and videos[0].get("video_id"):
+                metadata["igdb_video_id"] = videos[0]["video_id"]
             counts["popular"] += int(entry["popular"]); counts["upcoming"] += int(entry["upcoming"])
             for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
         self.meta.save()
@@ -1386,6 +1438,8 @@ class App(ctk.CTk):
         if say: say(message)
         if self.cat == "games" and self.sel is None:
             self.items = list(database.load_local_catalog("games")); self.show_genres()
+        elif self.sel is not None and self.sel_cat == "games":
+            self.render_detail(self.sel)
         if self.gate.winfo_ismapped(): self.gate.show_dashboard(message)
 
     def apply_watchmode(self, catalogs, say=None):
