@@ -66,6 +66,13 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS favorites (
+            username TEXT NOT NULL, media_id TEXT NOT NULL, created INTEGER NOT NULL,
+            PRIMARY KEY (username, media_id)
+        )
+    """)
+
     # Save the changes and close the connection cleanly
     conn.commit()
     conn.close()
@@ -181,15 +188,16 @@ def verify_user(username, password):
         return None
     finally: conn.close()
 
-def dashboard_stats(city="", state=""):
-    """Counts for the startup Dashboard. 'Near' matches the location text of saved events until events carry coordinates."""
+def dashboard_stats(city="", state="", username="__guest__"):
+    """Counts for the dashboard, including this user's saved favorites."""
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     cats = dict(c.execute("SELECT category, COUNT(*) FROM media_items GROUP BY category").fetchall())
     def near(term):
         if not term: return 0
         return c.execute("SELECT COUNT(DISTINCT media_id) FROM local_events WHERE location_details LIKE ?", (f"%{term}%",)).fetchone()[0]
     out = {"cats": cats, "total": sum(cats.values()), "events": c.execute("SELECT COUNT(*) FROM local_events").fetchone()[0],
-           "near_city": near(city), "near_state": near(f", {state}" if state else "")}
+           "near_city": near(city), "near_state": near(f", {state}" if state else ""),
+           "favorites": c.execute("SELECT COUNT(*) FROM favorites WHERE username = ?", (username or "__guest__",)).fetchone()[0]}
     conn.close(); return out
 
 
@@ -225,9 +233,28 @@ def add_credits(media_id, people):
 def media_id(cat, title, sub):
     return hashlib.sha1(f"{cat}_{title}_{sub}".encode()).hexdigest()
 
+def is_favorite(username, item_id):
+    """Check whether a catalog item is starred by this local Spotlight user."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute("SELECT 1 FROM favorites WHERE username = ? AND media_id = ?", (username or "__guest__", item_id)).fetchone() is not None
+    finally:
+        conn.close()
+
+def set_favorite(username, item_id, favorite):
+    """Add or remove one user's favorite without changing the catalog item."""
+    conn = sqlite3.connect(DB_PATH)
+    user_key = username or "__guest__"
+    if favorite:
+        conn.execute("INSERT OR IGNORE INTO favorites (username, media_id, created) VALUES (?, ?, ?)", (user_key, item_id, int(time.time())))
+    else:
+        conn.execute("DELETE FROM favorites WHERE username = ? AND media_id = ?", (user_key, item_id))
+    conn.commit(); conn.close()
+
 def delete_item(mid):
     conn = sqlite3.connect(DB_PATH)
     for t in ("media_items", "local_events", "cast_crew_directory"): conn.execute(f"DELETE FROM {t} WHERE " + ("id" if t == "media_items" else "media_id") + " = ?", (mid,))
+    conn.execute("DELETE FROM favorites WHERE media_id = ?", (mid,))
     conn.commit(); conn.close()
 
 def prune_source(source, keep_ids):

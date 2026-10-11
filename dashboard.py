@@ -70,8 +70,35 @@ class Gate(ctk.CTkFrame):
     def __init__(s, app, base):
         super().__init__(app, fg_color=BG, corner_radius=0)
         s.app, s.user, s.imgs, s.banner, s.logo = app, None, [], find_banner(base), trim_logo(load_logo(base))
+        s.refreshing, s.refresh_jobs_left = False, 0
+        s.refresh_banner, s.refresh_controls = None, []
         s.tmdb_footer_logo = load_tmdb_logo(base, "tmdb_footer.png")
         s.place(x=0, y=0, relwidth=1, relheight=1); s.show_login()
+
+    def set_refreshing(s, active, jobs=0):
+        """Show refresh progress and temporarily disable dashboard navigation/actions."""
+        s.refreshing = bool(active)
+        s.refresh_jobs_left = jobs if active else 0
+        if s.refresh_banner is not None and s.refresh_banner.winfo_exists():
+            if active:
+                s.refresh_banner.pack(pady=(0, 12))
+            else:
+                s.refresh_banner.pack_forget()
+        for widget, ready_state in s.refresh_controls:
+            try:
+                widget.configure(state="disabled" if active else ready_state)
+            except Exception:
+                pass
+
+    def refresh_job_finished(s):
+        """Release dashboard controls only after each source refresh has returned."""
+        if not s.refreshing:
+            return
+        s.refresh_jobs_left = max(0, s.refresh_jobs_left - 1)
+        if s.refresh_jobs_left == 0:
+            s.set_refreshing(False)
+            s.update_dashboard_stats()
+            s.say("Refresh complete.")
 
     def clear(s):
         for w in s.winfo_children(): w.destroy()
@@ -174,20 +201,26 @@ class Gate(ctk.CTkFrame):
     def show_dashboard(s, status=""):
         s.clear(); p=s.page
         u = s.user or {"display_name": "Guest", "city": "", "state": ""}; city, state = u.get("city") or "", u.get("state") or ""
-        st = database.dashboard_stats(city, state); c = st["cats"]
+        st = database.dashboard_stats(city, state, u.get("username") or "__guest__"); c = st["cats"]
         s.logo_label(190)
         ctk.CTkLabel(p, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
         where = ", ".join(x for x in (city, state) if x) or "No location set: create an account with a ZIP code to see what's near you"
         ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14)).pack(pady=(2, 22))
+        s.refresh_banner = ctk.CTkLabel(p, text="⏳  Refreshing Spotlight data… Please wait. Dashboard actions will be available when all updates finish.",
+                                        fg_color="#42351d", text_color="#f0cf78", corner_radius=10,
+                                        font=("Segoe UI", 14, "bold"), padx=16, pady=11, wraplength=900)
+        if s.refreshing: s.refresh_banner.pack(pady=(0, 12))
         dashboard_actions = ctk.CTkFrame(p, fg_color="transparent"); dashboard_actions.pack(pady=(0, 18))
         cards = [("Titles found", st["total"]), ("🎵 Music", c.get("music", 0)), ("🎬 Movies", c.get("movies", 0)), ("📺 TV", c.get("tv", 0)),
                  ("🎮 Games", c.get("games", 0)), ("🏆 Sports", c.get("sports", 0)), ("🎪 Festivals", c.get("festivals", 0)), ("📍 Local events saved", st["events"]),
-                 (f"Titles near {city}" if city else "Titles near you", st["near_city"] if city else "-"),
+                 ("⭐ Favorites", st["favorites"]),
                  (f"Titles in {state}" if state else "Titles in your state", st["near_state"] if state else "-")]
         grid = ctk.CTkFrame(p, fg_color="transparent"); grid.pack()
+        s.stats_value_labels = []
         for i, (label, val) in enumerate(cards):
             f = ctk.CTkFrame(grid, width=200, height=110, fg_color=CARD, corner_radius=16); f.grid(row=i // 5, column=i % 5, padx=8, pady=8); f.pack_propagate(False)
-            ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD).pack(pady=(16, 0))
+            value_label = ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD); value_label.pack(pady=(16, 0))
+            s.stats_value_labels.append(value_label)
             ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5").pack()
         cfg = events.load_cfg(); live = ctk.CTkFrame(p, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
         def saved_api_value(name, source):
@@ -197,21 +230,34 @@ class Gate(ctk.CTkFrame):
         ctk.CTkLabel(live, text="🌐  Spotlight data sources", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
         area_row = ctk.CTkFrame(live, fg_color="transparent"); area_row.pack(anchor="w", padx=14, pady=(6, 2))
         ctk.CTkLabel(area_row, text="Search area", text_color="#9aa0b5").pack(side="left", padx=(0, 8))
-        area_choices = ["Nearby (75 mi)"]
-        state_choice = f"All of {state}" if state else ""
-        if state_choice: area_choices.append(state_choice)
+        state_choice = f"All of {state}" if state else "Statewide (add a ZIP code to your account)"
+        area_choices = [state_choice]
         area = ctk.StringVar(value=area_choices[0])
-        ctk.CTkOptionMenu(area_row, values=area_choices, variable=area, width=170).pack(side="left")
+        area_selector = ctk.CTkOptionMenu(area_row, values=area_choices, variable=area, width=210,
+                                          state="normal" if state else "disabled")
+        area_selector.pack(side="left")
         def refresh_all():
+            if s.refreshing: return
             save_api_keys()
+            s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal")]
+            s.refresh_controls.extend((button, "normal") for button in s.dashboard_action_buttons)
+            s.set_refreshing(True, jobs=5)
             current = events.load_cfg()
             report = lambda key, state, message: s.app.uiq.put((s.update_api_status, (key, state, message)))
-            s.app.sync_tmdb(s.say, current.get("tmdb_key", ""), report)
-            s.app.sync_events(s.say, "state" if area.get() == state_choice and state_choice else "nearby", report)
-            s.app.sync_watchmode(s.say, current.get("watchmode_key", ""), report)
-            s.app.sync_igdb(s.say, current.get("igdb_client_id", ""), saved_api_value("igdb_client_secret", current), report)
+            done = s.refresh_job_finished
+            def start_refresh(job, *args):
+                try: job(*args, done)
+                except Exception as exc:
+                    s.say(f"A refresh job could not start: {exc}")
+                    done()
+            start_refresh(s.app.sync_tmdb, s.say, current.get("tmdb_key", ""), report)
+            start_refresh(s.app.sync_events, s.say, "state", report)
+            start_refresh(s.app.sync_ohio_schedules, s.say)
+            start_refresh(s.app.sync_watchmode, s.say, current.get("watchmode_key", ""), report)
+            start_refresh(s.app.sync_igdb, s.say, current.get("igdb_client_id", ""), saved_api_value("igdb_client_secret", current), report)
 
-        ctk.CTkButton(area_row, text="🔄  Refresh", width=125, command=refresh_all).pack(side="left", padx=(10, 0))
+        refresh_button = ctk.CTkButton(area_row, text="🔄  Refresh", width=125, command=refresh_all)
+        refresh_button.pack(side="left", padx=(10, 0))
 
         manager_head = ctk.CTkFrame(live, fg_color="transparent"); manager_head.pack(fill="x", padx=14, pady=(6, 2))
         manager = ctk.CTkScrollableFrame(live, fg_color=PANEL, corner_radius=10, width=560, height=255)
@@ -317,10 +363,31 @@ class Gate(ctk.CTkFrame):
                                 text_color="#9aa0b5", font=("Segoe UI", 11), wraplength=560, justify="center"); s.status.pack(pady=(0, 4))
         ctk.CTkLabel(live, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#9aa0b5", font=("Segoe UI", 11)).pack(pady=(0, 10))
         s.sponsor_footer(p)
-        ctk.CTkButton(dashboard_actions, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.place_forget).pack(side="left", padx=8)
-        ctk.CTkButton(dashboard_actions, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote).pack(side="left", padx=8)
-        ctk.CTkButton(dashboard_actions, text="🔄 Community", width=120, height=46, fg_color=CARD, hover_color=HOVER, command=lambda: s.app.sync_community(s.say)).pack(side="left", padx=8)
-        ctk.CTkButton(dashboard_actions, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out).pack(side="left", padx=8)
+        enter_button = ctk.CTkButton(dashboard_actions, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.place_forget)
+        enter_button.pack(side="left", padx=8)
+        promote_button = ctk.CTkButton(dashboard_actions, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote)
+        promote_button.pack(side="left", padx=8)
+        community_button = ctk.CTkButton(dashboard_actions, text="🔄 Community", width=120, height=46, fg_color=CARD, hover_color=HOVER, command=lambda: s.app.sync_community(s.say))
+        community_button.pack(side="left", padx=8)
+        signout_button = ctk.CTkButton(dashboard_actions, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out)
+        signout_button.pack(side="left", padx=8)
+        s.dashboard_action_buttons = [enter_button, promote_button, community_button, signout_button]
+        s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal")]
+        s.refresh_controls.extend((button, "normal") for button in s.dashboard_action_buttons)
+        if s.refreshing: s.set_refreshing(True, jobs=s.refresh_jobs_left)
+
+    def update_dashboard_stats(s):
+        """Refresh the visible count cards without clearing or rebuilding the dashboard."""
+        if not getattr(s, "stats_value_labels", None): return
+        u = s.user or {"city": "", "state": ""}
+        city, state = u.get("city") or "", u.get("state") or ""
+        st = database.dashboard_stats(city, state, u.get("username") or "__guest__")
+        cats = st["cats"]
+        values = [st["total"], cats.get("music", 0), cats.get("movies", 0), cats.get("tv", 0), cats.get("games", 0),
+                  cats.get("sports", 0), cats.get("festivals", 0), st["events"], st["favorites"], st["near_state"] if state else "-"]
+        for label, value in zip(s.stats_value_labels, values):
+            try: label.configure(text=str(value))
+            except Exception: pass
 
     def sign_out(s):
         s.user = None; s.show_login()

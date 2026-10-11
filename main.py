@@ -58,25 +58,6 @@ GENRES = {"music": [("Pop", "🎤"), ("Hip-Hop", "🎧"), ("Rock", "🎸"), ("El
           "sports": [("Baseball", "⚾"), ("Basketball", "🏀"), ("Football", "🏈"), ("Hockey", "🏒"), ("Soccer", "⚽"), ("Golf", "⛳"), ("Tennis", "🎾"), ("Racing", "🏁"), ("MMA & Boxing", "🥊"),
                      ("Wrestling", "🤼"), ("Rodeo", "🤠"), ("Poker", "🃏"), ("Bowling", "🎳"), ("Pool & Billiards", "🎱"), ("Darts", "🎯"), ("Esports", "🎮")],
           "festivals": [("Harvest & Food", "🎃"), ("County & State Fairs", "🎡"), ("Music Festivals", "🎶"), ("Arts & Crafts", "🎨"), ("Parades & Holidays", "🎆"), ("Cultural", "🌍"), ("Film Festivals", "🎬"), ("Car Shows", "🚗"), ("Renaissance & Fantasy", "🏰")]}
-# (cat, title, sub, year, score, desc, first_shown, recent_shown, genre, [(name, role, bio)], [(venue, time, location)])  -- demo data
-SEED = [
- ("movies", "Everything Everywhere All at Once", "A24", "2022", 94.2, "An aging Chinese immigrant is swept up in an insane adventure across alternate realities.", "March 11, 2022", "Tonight at Multiplex", "Sci-Fi",
-  [("Michelle Yeoh", "Evelyn Wang", "Academy Award winning martial arts and dramatic performance icon."), ("Ke Huy Quan", "Waymond Wang", "Acclaimed comeback cinema star and stunt coordinator.")],
-  [("AMC Easton Town Center 30", "Tonight @ 7:00 PM & 9:45 PM", "Columbus, OH"), ("Gateway Film Center", "Tomorrow @ 4:30 PM", "High St, Columbus, OH")]),
- ("movies", "Mad Max: Fury Road", "Warner Bros.", "2015", 92.0, "A relentless desert chase and one of the great practical-effects action films.", "May 15, 2015", "Cult favorite", "Action", [("Charlize Theron", "Imperator Furiosa", "Oscar-winning actor and producer."), ("George Miller", "Director", "Creator of the Mad Max series.")], []),
- ("movies", "Get Out", "Universal", "2017", 91.0, "A social thriller that turns a weekend visit into a nightmare.", "Feb 24, 2017", "Streaming", "Horror", [("Jordan Peele", "Writer / Director", "Won the Oscar for Best Original Screenplay for this film.")], []),
- ("tv", "Breaking Bad", "AMC", "2008", 97.0, "A chemistry teacher turns to crime after a life-changing diagnosis.", "Jan 20, 2008", "Streaming", "Drama", [("Bryan Cranston", "Walter White", "Four-time Emmy winner for this role.")], []),
- ("tv", "Stranger Things", "Netflix", "2016", 90.0, "Kids in a 1980s Indiana town face government secrets and a parallel dimension.", "Jul 15, 2016", "Streaming", "Sci-Fi", [("Millie Bobby Brown", "Eleven", "Breakout star of the series.")], []),
- ("games", "Elden Ring", "FromSoftware", "2022", 96.0, "Open-world action RPG with world-building by George R. R. Martin.", "Feb 25, 2022", "Ongoing", "RPG", [("Hidetaka Miyazaki", "Director", "FromSoftware president and Soulsborne designer.")], []),
- ("games", "Hades", "Supergiant Games", "2020", 93.0, "A rogue-like dungeon crawler where dying is part of the story.", "Sep 17, 2020", "Ongoing", "Indie", [("Greg Kasavin", "Creative Director", "Writer and creative lead at Supergiant Games.")], []),
- # Demo rows for the new categories (real dates/tickets arrive with live event feeds)
- ("sports", "Ohio State Buckeyes Football", "Columbus, OH", "2026", 90.0, "Big Ten college football at Ohio Stadium.", "Fall season", "Home games this fall", "Football", [], []),
- ("sports", "Cleveland Guardians", "Cleveland, OH", "2026", 84.0, "Major League Baseball at Progressive Field.", "Spring to fall", "Season schedule", "Baseball", [], []),
- ("sports", "Cleveland Cavaliers", "Cleveland, OH", "2026", 83.0, "NBA basketball in downtown Cleveland.", "Fall to spring", "Season schedule", "Basketball", [], []),
- ("festivals", "Circleville Pumpkin Show", "Circleville, OH", "2026", 92.0, "Long-running October pumpkin festival with parades, food and the giant pumpkin weigh-off.", "Annual", "Third week of October", "Harvest & Food", [], []),
- ("festivals", "Ohio State Fair", "Columbus, OH", "2026", 91.0, "Annual state fair with rides, livestock shows, concerts and food.", "Annual", "Summer", "County & State Fairs", [], []),
-]
-
 def g(r, k, d=""):
     try: v = r[k]; return d if v is None else v
     except Exception: return d
@@ -370,26 +351,13 @@ class App(ctk.CTk):
 
     # ---------- data ----------
     def seed(self):
-        if self.meta.d.get("_seeded_v4"): return
-        # Remove only the four known sample tracks from earlier versions.
-        sample_tracks = {"Blinding Lights", "As It Was", "SICKO MODE", "Bohemian Rhapsody"}
-        for item in database.load_local_catalog("music"):
-            if g(item, "title") in sample_tracks:
-                try:
-                    sources = json.loads(g(item, "sources", "[]") or "[]")
-                except (TypeError, ValueError):
-                    sources = []
+        """Remove legacy sample records so categories contain only real catalog data."""
+        for category in ACC:
+            for item in database.load_local_catalog(category):
+                try: sources = json.loads(g(item, "sources", "[]") or "[]")
+                except (TypeError, ValueError): sources = []
                 if "Demo" in sources:
                     database.delete_item(g(item, "id"))
-        have = {c: {g(i, "title") for i in database.load_local_catalog(c)} for c in ACC}
-        for cat, title, sub, year, score, desc, first, recent, genre, cast, ev in SEED:
-            try:
-                if title not in have[cat]:
-                    database.save_media_item(cat, {"title": title, "sub": sub, "year": year, "url": "", "score": score, "desc": desc, "first_shown": first, "recent_shown": recent, "srcs": ["Demo"]},
-                                             [{"name": n, "role": r, "bio": b} for n, r, b in cast], [{"venue": v, "time": t, "location": l, "purchase_url": ""} for v, t, l in ev])
-            except Exception as e: print("seed skipped:", title, e)
-            self.meta.d.setdefault(f"{cat}|{title}", {}).setdefault("genre", genre)
-        self.meta.d["_seeded_v4"] = True; self.meta.save()
 
     def _prune_watchmode_metadata(self):
         """Expire Watchmode non-image cache entries at the Free plan's 30-day limit."""
@@ -633,6 +601,30 @@ class App(ctk.CTk):
             return
         # Defer until Tk has recalculated the scroll region for the new children.
         self.after_idle(lambda: canvas.yview_moveto(0) if canvas.winfo_exists() else None)
+    def favorite_user_key(self):
+        user = getattr(getattr(self, "gate", None), "user", None) or {}
+        return user.get("username") or "__guest__"
+    def favorite_button(self, parent, item):
+        """Create the persistent per-user star used on catalog and search cards."""
+        item_id = g(item, "id")
+        active = database.is_favorite(self.favorite_user_key(), item_id)
+        button = ctk.CTkButton(parent, text="★" if active else "☆", width=28, height=24,
+                               font=("Segoe UI Symbol", 19, "bold"), fg_color="transparent", hover_color=HOVER,
+                               text_color="#ffd84d" if active else "#a8aab2",
+                               command=lambda: self.toggle_favorite(item, button))
+        return button
+    def toggle_favorite(self, item, button):
+        user_key, item_id = self.favorite_user_key(), g(item, "id")
+        active = not database.is_favorite(user_key, item_id)
+        database.set_favorite(user_key, item_id, active)
+        button.configure(text="★" if active else "☆", text_color="#ffd84d" if active else "#a8aab2")
+        if getattr(self, "gate", None) is not None and self.gate.winfo_ismapped():
+            self.gate.update_dashboard_stats()
+    def bind_card(self, widget, callback, excluded=None):
+        """Make a card selectable while leaving its favorite button independent."""
+        if widget is excluded: return
+        widget.bind("<Button-1>", callback, add="+")
+        for child in widget.winfo_children(): self.bind_card(child, callback, excluded)
     def show_panel(self):
         if not self.feed.winfo_ismapped(): self.feed.pack(side="left", fill="y", padx=(2, 2), before=self.insp_box)
         self._update_tmdb_promo()
@@ -784,18 +776,32 @@ class App(ctk.CTk):
             im = ctk.CTkImage(art(g(it, "title"), ACC[self.cat], (116, 172)), size=(58, 86)); self.imgs.append(im)
             ctk.CTkLabel(row, text="", image=im).pack(side="left", padx=10, pady=8)
             col = ctk.CTkFrame(row, fg_color="transparent"); col.pack(side="left", fill="both", expand=True, pady=10)
-            ctk.CTkLabel(col, text=f"#{start + n + 1}", font=("Segoe UI", 12, "bold"), text_color=hexc(ACC[self.cat]), anchor="w").pack(fill="x")
+            card_top = ctk.CTkFrame(col, fg_color="transparent"); card_top.pack(fill="x")
+            ctk.CTkLabel(card_top, text=f"#{start + n + 1}", font=("Segoe UI", 12, "bold"), text_color=hexc(ACC[self.cat]), anchor="w").pack(side="left")
+            star = self.favorite_button(card_top, it); star.pack(side="right", padx=(2, 8))
             title_text = g(it, "title")
             title_font = 17 if len(title_text) < 38 else 15 if len(title_text) < 62 else 13
             subtitle_text = f"{sub_of(it)} · {g(it, 'year')}".strip(" ·")
             title_height = wrapped_height(self.insp, title_text, title_font, 190, True)
             subtitle_height = wrapped_height(self.insp, subtitle_text, 13, 190)
-            row_height = max(108, min(210, 38 + title_height + (subtitle_height if subtitle_text else 0) + 22))
+            festival_date = g(it, "recent_shown") if self.cat == "festivals" else ""
+            date_height = wrapped_height(self.insp, festival_date, 12, 190) if festival_date else 0
+            website_height = 25 if self.cat == "festivals" and g(it, "url") else 0
+            row_height = max(108, 38 + title_height + (subtitle_height if subtitle_text else 0) + date_height + website_height + 22)
             row.configure(height=row_height)
             ctk.CTkLabel(col, text=title_text, font=("Segoe UI", title_font, "bold"), anchor="w", justify="left", wraplength=190, height=title_height).pack(fill="x")
             ctk.CTkLabel(col, text=subtitle_text, font=("Segoe UI", 13), text_color="#9aa0b5", anchor="w", justify="left", wraplength=190, height=subtitle_height).pack(fill="x")
+            if festival_date:
+                ctk.CTkLabel(col, text=festival_date, font=("Segoe UI", 12), text_color="#c7bbf5", anchor="w",
+                             justify="left", wraplength=190, height=date_height).pack(fill="x")
+            if self.cat == "festivals" and g(it, "url"):
+                website = g(it, "url")
+                host = urllib.parse.urlparse(website).netloc.removeprefix("www.")
+                ctk.CTkButton(col, text=f"🌐  {host or 'Event website'}", height=22, fg_color="transparent",
+                              text_color="#7bbcff", hover_color=HOVER, anchor="w",
+                              command=lambda link=website: webbrowser.open(link)).pack(fill="x", pady=(2, 0))
             ctk.CTkLabel(row, text=f"{float(g(it, 'score', 0) or 0):.0f}", width=46, height=46, corner_radius=23, fg_color=hexc(ACC[self.cat], 0.6), font=("Segoe UI", 16, "bold")).pack(side="right", padx=10)
-            bind_all(row, lambda e, n=n: self.select(n)); self.cards[n] = row
+            self.bind_card(row, lambda e, n=n: self.select(n), star); self.cards[n] = row
         if rows:
             controls = ctk.CTkFrame(self.list, fg_color="transparent")
             controls.pack(fill="x", padx=4, pady=(12, 18))
@@ -885,10 +891,12 @@ class App(ctk.CTk):
             ctk.CTkLabel(row, text="", image=image).pack(side="left", padx=9, pady=7)
             details = ctk.CTkFrame(row, fg_color="transparent"); details.pack(side="left", fill="both", expand=True, pady=8)
             category_name = next((name for key, _icon, name in NAV if key == category), category.title())
-            ctk.CTkLabel(details, text=category_name.upper(), font=("Segoe UI", 10, "bold"), text_color=hexc(accent), anchor="w").pack(fill="x")
+            top_line = ctk.CTkFrame(details, fg_color="transparent"); top_line.pack(fill="x")
+            ctk.CTkLabel(top_line, text=category_name.upper(), font=("Segoe UI", 10, "bold"), text_color=hexc(accent), anchor="w").pack(side="left")
+            star = self.favorite_button(top_line, item); star.pack(side="right", padx=(2, 8))
             ctk.CTkLabel(details, text=title_text, font=("Segoe UI", 15, "bold"), anchor="w", justify="left", wraplength=220, height=title_height).pack(fill="x")
             ctk.CTkLabel(details, text=subtitle, font=("Segoe UI", 12), text_color="#9aa0b5", anchor="w", justify="left", wraplength=220, height=subtitle_height).pack(fill="x")
-            bind_all(row, lambda _event, number=index: self.select(number)); self.cards[index] = row
+            self.bind_card(row, lambda _event, number=index: self.select(number), star); self.cards[index] = row
         controls = ctk.CTkFrame(self.list, fg_color="transparent"); controls.pack(fill="x", padx=4, pady=(12, 18))
         ctk.CTkButton(controls, text="‹  Previous", width=110, fg_color=CARD, hover_color=HOVER, state="normal" if self.page > 0 else "disabled",
                       command=lambda: self.change_feed_page(-1)).pack(side="left")
@@ -1002,7 +1010,7 @@ class App(ctk.CTk):
         platform_text = "   •   Platforms: " + ", ".join(platforms[:5]) if platforms else ""
         self.meta_lbl.configure(text=f"{sub_of(it)}   •   {self.genre_of(it)}   •   {lead}" + platform_text + (f"   •   {extra}" if extra else ""))
         self.cast_row.section_heading.configure(text="🎤  Artist / Musician" if cat == "music" else "👥  Cast & Crew")
-        self.ev_box.section_heading.configure(text="🛒  Where to Buy" if cat == "games" else "📍  Local Venues & Showtimes")
+        self.ev_box.section_heading.configure(text="🛒  Where to Buy" if cat == "games" else "🌐  Event website & dates" if cat == "festivals" else "📍  Local Venues & Showtimes")
         desc_text = " ".join(str(g(it, "description") or "").split())
         if cat == "music":
             desc_text = re.sub(r"([A-Z]{2,})([A-Z][a-z])", r"\1 \2", desc_text)
@@ -1052,6 +1060,16 @@ class App(ctk.CTk):
         evs = [] if is_streaming or cat == "games" else database.load_details(g(it, "id"))[1]
         if cat == "games":
             self.game_store_row(self.ev_box, title, m)
+        elif cat == "festivals":
+            event_url = m.get("event_website") or g(it, "url")
+            source_url = m.get("event_source_url")
+            if event_url:
+                ctk.CTkButton(self.ev_box, text="🌐  Open event website", fg_color="#1E7A34", hover_color="#27a046",
+                              command=lambda link=event_url: webbrowser.open(link)).pack(anchor="w", pady=(2, 6))
+            if source_url:
+                ctk.CTkButton(self.ev_box, text="Source listing: OhioFestivals.net", fg_color=CARD, hover_color=HOVER,
+                              command=lambda link=source_url: webbrowser.open(link)).pack(anchor="w", pady=(0, 6))
+            ctk.CTkLabel(self.ev_box, text="Confirm event dates and details with the organizer.", text_color="#9aa0b5").pack(anchor="w")
         elif not evs and not is_streaming:
             ctk.CTkLabel(self.ev_box, text="No saved dates yet. Search ticket vendors:", text_color="#888").pack(anchor="w"); self.vendor_row(self.ev_box, title, cat)
         for ev in evs:
@@ -1240,46 +1258,79 @@ class App(ctk.CTk):
         self.meta.save()
         if "count" in res:
             msg = f"Community events: {res['count']} listed." + (f" {res['pruned']} removed." if res.get("pruned") else "")
+            self.publish_dashboard_update(msg)
             if say: say(msg)
-            if self.gate.winfo_ismapped(): self.gate.show_dashboard(msg)
-    def sync_events(self, say, scope="nearby", status_callback=None):
-        """Load Ticketmaster listings near the user's ZIP or across their state."""
+    def publish_dashboard_update(self, message):
+        """Update dashboard counts and status in place, avoiding a blank-screen rebuild."""
+        gate = getattr(self, "gate", None)
+        if gate is not None and gate.winfo_ismapped():
+            gate.update_dashboard_stats()
+            gate.say(message)
+    def sync_events(self, say, scope="state", status_callback=None, on_complete=None):
+        """Load Ticketmaster event listings for the user's state."""
+        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
         u = self.gate.user or {}; key = events.load_cfg().get("ticketmaster_key", "")
         if not key:
             if status_callback: status_callback("ticketmaster_key", "not_set", "Ticketmaster: key not set.")
-            return say("Ticketmaster key not set. Other configured sources will still refresh.")
+            say("Ticketmaster key not set. Other configured sources will still refresh."); done(); return
         statewide = scope == "state"
         if statewide and not u.get("state"):
             if status_callback: status_callback("ticketmaster_key", "not_checked", "Ticketmaster needs a ZIP code to search by state.")
-            return say("Add a ZIP code to your account to search Ticketmaster events by state.")
-        if not statewide and not u.get("lat"):
-            if status_callback: status_callback("ticketmaster_key", "not_checked", "Ticketmaster needs a ZIP code for nearby events.")
-            return say("Sign in with an account that has a ZIP code to search nearby events.")
-        search_label = f"all of {u['state']}" if statewide else "near you"
+            say("Add a ZIP code to your account to search Ticketmaster events by state."); done(); return
+        search_label = f"all of {u['state']}"
         say("Starting…")
         def work():
             try: res = events.sync(key, u.get("lat"), u.get("lng"), POSTERS, lambda s: self.uiq.put((say, (s,))), state_code=u.get("state") if statewide else None)
             except urllib.error.HTTPError as e:
                 msg = "Ticketmaster rejected the key. Check the saved credential." if e.code in (401, 403) else f"Ticketmaster request failed (HTTP {e.code})."
                 if status_callback: status_callback("ticketmaster_key", "bad", msg)
-                return self.uiq.put((say, (msg,)))
+                self.uiq.put((say, (msg,))); done(); return
             except Exception as e:
                 if status_callback: status_callback("ticketmaster_key", "bad", f"Ticketmaster unavailable: {e}")
-                return self.uiq.put((say, (f"Ticketmaster sync failed: {e}",)))
+                self.uiq.put((say, (f"Ticketmaster sync failed: {e}",))); done(); return
             if status_callback: status_callback("ticketmaster_key", "ok", "Ticketmaster connection working.")
             self.uiq.put((self.apply_sync, (res, search_label)))
+            done()
         threading.Thread(target=work, daemon=True).start()
     def apply_sync(self, res, search_label="near you"):
         for (cat, title), kw in res["meta"].items(): self.meta.d.setdefault(f"{cat}|{title}", {}).update(kw)
         self.meta.save()
         if self.cat == "music" and self.sel is None:
             self.items = list(database.load_local_catalog("music"))
-        self.gate.show_dashboard(f"Done: {res['music']} concerts/music events, {res['sports']} sports, and {res['festivals']} festivals and fairs found {search_label}.")
-    def sync_tmdb(self, say, token, status_callback=None):
+        self.publish_dashboard_update(f"Done: {res['music']} concerts/music events, {res['sports']} sports, and {res['festivals']} festivals and fairs found {search_label}.")
+
+    def sync_ohio_schedules(self, say, on_complete=None):
+        """Refresh Ohio festival/fair schedule facts and event links in a worker thread."""
+        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
+        say("Updating Ohio festival and fair listings…")
+        def work():
+            try:
+                result = events.sync_ohio_schedules()
+            except Exception as exc:
+                self.uiq.put((say, (f"Ohio Festivals refresh failed: {exc}",)))
+                done()
+                return
+            self.uiq.put((self.apply_ohio_schedules, (result, say)))
+            done()
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_ohio_schedules(self, result, say=None):
+        for entry in result.get("entries", []):
+            self.meta.d.setdefault(f"festivals|{entry['title']}", {}).update(entry.get("meta", {}))
+        self.meta.save()
+        if self.cat == "festivals" and self.sel is None:
+            self.items = list(database.load_local_catalog("festivals"))
+            self.show_genres()
+        message = (f"OhioFestivals.net refreshed: {result.get('count', 0)} upcoming events; "
+                   f"{result.get('removed', 0)} older listings removed. Confirm dates with organizers.")
+        self.publish_dashboard_update(message)
+        if say: say(message)
+    def sync_tmdb(self, say, token, status_callback=None, on_complete=None):
         """Refresh the movie and on-air TV catalogs from TMDB in the background."""
+        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
         if not token:
             if status_callback: status_callback("tmdb_key", "not_set", "TMDB key not set.")
-            return say("TMDB key not set. Other configured sources will still refresh.")
+            say("TMDB key not set. Other configured sources will still refresh."); done(); return
         say("Updating currently playing movies and on-air TV from TMDB…")
         def work():
             try:
@@ -1287,10 +1338,10 @@ class App(ctk.CTk):
             except urllib.error.HTTPError as exc:
                 message = "TMDB rejected the token. Check it in the TMDB key field and try again." if exc.code in (401, 403) else f"TMDB update failed (HTTP {exc.code})."
                 if status_callback: status_callback("tmdb_key", "bad", message)
-                return self.uiq.put((say, (message,)))
+                self.uiq.put((say, (message,))); done(); return
             except Exception as exc:
                 if status_callback: status_callback("tmdb_key", "bad", f"TMDB unavailable: {exc}")
-                return self.uiq.put((say, (f"TMDB update failed: {exc}",)))
+                self.uiq.put((say, (f"TMDB update failed: {exc}",))); done(); return
             for cat in ("movies", "tv"):
                 for result in catalogs.get(cat, []):
                     poster_path = os.path.join(POSTERS, slug(result["title"]) + ".jpg")
@@ -1299,13 +1350,15 @@ class App(ctk.CTk):
                         except Exception: pass
             if status_callback: status_callback("tmdb_key", "ok", "TMDB connection working.")
             self.uiq.put((self.apply_tmdb, (catalogs, say)))
+            done()
         threading.Thread(target=work, daemon=True).start()
 
-    def sync_watchmode(self, say, key, status_callback=None):
+    def sync_watchmode(self, say, key, status_callback=None, on_complete=None):
         """Refresh bounded US movie and TV streaming catalogs with the local Watchmode key."""
+        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
         if not key:
             if status_callback: status_callback("watchmode_key", "not_set", "Watchmode key not set.")
-            return say("Watchmode key not set. Other configured sources will still refresh.")
+            say("Watchmode key not set. Other configured sources will still refresh."); done(); return
         say("Updating US streaming catalog from Watchmode…")
         def work():
             try:
@@ -1314,23 +1367,25 @@ class App(ctk.CTk):
             except urllib.error.HTTPError as exc:
                 message = "Watchmode rejected the key. Check the saved credential." if exc.code in (401, 403) else f"Watchmode update failed (HTTP {exc.code})."
                 if status_callback: status_callback("watchmode_key", "bad", message)
-                return self.uiq.put((say, (message,)))
+                self.uiq.put((say, (message,))); done(); return
             except Exception as exc:
                 if status_callback: status_callback("watchmode_key", "bad", f"Watchmode unavailable: {exc}")
-                return self.uiq.put((say, (f"Watchmode update failed: {exc}",)))
+                self.uiq.put((say, (f"Watchmode update failed: {exc}",))); done(); return
             if status_callback: status_callback("watchmode_key", "ok", "Watchmode connection working.")
             self.uiq.put((self.apply_watchmode, (catalogs, say)))
+            done()
         threading.Thread(target=work, daemon=True).start()
 
-    def sync_igdb(self, say, client_id, client_secret, status_callback=None):
+    def sync_igdb(self, say, client_id, client_secret, status_callback=None, on_complete=None):
         """Validate IGDB credentials and refresh a bounded popular/upcoming game catalog."""
+        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
         def report(state, message):
             if status_callback:
                 status_callback("igdb_client_id", state, message)
                 status_callback("igdb_client_secret", state, message)
         if not client_id or not client_secret:
             report("not_set", "IGDB needs both a Twitch Client ID and Client Secret; other sources will still refresh.")
-            return say("IGDB needs both Twitch credentials. Other configured sources will still refresh.")
+            say("IGDB needs both Twitch credentials. Other configured sources will still refresh."); done(); return
         say("Updating popular and upcoming games from IGDB…")
         def work():
             try:
@@ -1339,7 +1394,7 @@ class App(ctk.CTk):
                 if not game_count:
                     message = "IGDB credentials work, but the game queries returned no titles. Check the IGDB app access and try Refresh again."
                     report("bad", message)
-                    return self.uiq.put((say, (message,)))
+                    self.uiq.put((say, (message,))); done(); return
                 # Download covers in the worker so the desktop UI stays responsive.
                 cover_jobs = {}; screenshot_jobs = {}
                 for result in (catalogs.get("popular", []) or []) + (catalogs.get("upcoming", []) or []):
@@ -1370,12 +1425,13 @@ class App(ctk.CTk):
             except urllib.error.HTTPError as exc:
                 message = "IGDB rejected the Twitch credentials. Check the Client ID and Client Secret." if exc.code in (400, 401, 403) else f"IGDB update failed (HTTP {exc.code})."
                 report("bad", message)
-                return self.uiq.put((say, (message,)))
+                self.uiq.put((say, (message,))); done(); return
             except Exception as exc:
                 report("bad", f"IGDB unavailable: {exc}")
-                return self.uiq.put((say, (f"IGDB update failed: {exc}",)))
+                self.uiq.put((say, (f"IGDB update failed: {exc}",))); done(); return
             report("ok", "IGDB credentials working; catalog data loaded.")
             self.uiq.put((self.apply_igdb_safely, (catalogs, say, report)))
+            done()
         threading.Thread(target=work, daemon=True).start()
 
     def apply_igdb_safely(self, catalogs, say, report):
@@ -1440,7 +1496,7 @@ class App(ctk.CTk):
             self.items = list(database.load_local_catalog("games")); self.show_genres()
         elif self.sel is not None and self.sel_cat == "games":
             self.render_detail(self.sel)
-        if self.gate.winfo_ismapped(): self.gate.show_dashboard(message)
+        self.publish_dashboard_update(message)
 
     def apply_watchmode(self, catalogs, say=None):
         """Store one bounded page per media type; source links are loaded on demand."""
@@ -1477,7 +1533,7 @@ class App(ctk.CTk):
         if say: say(message)
         if self.cat in {"movies", "tv"} and self.sel is None:
             self.items = list(database.load_local_catalog(self.cat)); self.show_genres()
-        if self.gate.winfo_ismapped(): self.gate.show_dashboard(message)
+        self.publish_dashboard_update(message)
     def apply_tmdb(self, catalogs, say=None):
         now = int(time.time()); added = {"movies": 0, "tv": 0}; updated = {"movies": 0, "tv": 0}
         for cat in ("movies", "tv"):
@@ -1501,7 +1557,7 @@ class App(ctk.CTk):
         movie_total = len(database.load_local_catalog("movies")); tv_total = len(database.load_local_catalog("tv"))
         details = f"TMDB updated: {added['movies']} new movies, {updated['movies']} refreshed; {added['tv']} new TV shows, {updated['tv']} refreshed."
         if say: say(f"{details} Current catalog totals: {movie_total} movies, {tv_total} TV shows.")
-        if self.gate.winfo_ismapped(): self.gate.show_dashboard(f"{details} Full cast, trailers, and extended details load when you open a title.")
+        self.publish_dashboard_update(f"{details} Full cast, trailers, and extended details load when you open a title.")
     def open_buy(self):
         if self.sel: url = self.meta.get(self.sel_cat, g(self.sel, "title")).get("buy_url"); url and webbrowser.open(url)
     def close_bio(self):
