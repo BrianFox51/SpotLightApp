@@ -3,6 +3,7 @@ and the Steam store (games), plus cast / artist biographies and photos from Wiki
 raise on network failure so the caller can simply retry next time."""
 import os, re, json, urllib.request, urllib.parse, urllib.error
 import time
+import datetime
 
 UA = {"User-Agent": "SpotlightApp/1.0 (desktop media dashboard; https://mythicmaskworks.com)"}
 
@@ -21,6 +22,36 @@ def _money(v):
     try: return f"${float(v):.2f}" if float(v) > 0 else ""
     except Exception: return ""
 def _has(folder, slug, exts): return any(os.path.exists(os.path.join(folder, slug + e)) for e in exts)
+
+
+def tvmaze_schedule(days=7):
+    """Fetch a rolling US broadcast schedule and group episode airtimes by show."""
+    start = datetime.date.today()
+    shows = {}
+    for offset in range(max(1, min(int(days), 14))):
+        day = start + datetime.timedelta(days=offset)
+        episodes = _json("https://api.tvmaze.com/schedule?" + _q(country="US", date=day.isoformat()))
+        for episode in episodes if isinstance(episodes, list) else []:
+            show = episode.get("show") or {}
+            title = str(show.get("name") or "").strip()
+            if not title: continue
+            channel = show.get("network") or show.get("webChannel") or {}
+            channel_name = str(channel.get("name") or "TV channel").strip()
+            airdate = str(episode.get("airdate") or day.isoformat())
+            airtime = str(episode.get("airtime") or "").strip()
+            episode_name = str(episode.get("name") or "").strip()
+            season, number = episode.get("season"), episode.get("number")
+            episode_code = f"S{int(season):02d} E{int(number):02d}" if isinstance(season, (int, float)) and isinstance(number, (int, float)) else ""
+            episode_label = " · ".join(part for part in (episode_code, episode_name) if part)
+            airings = shows.setdefault(title, {"title": title, "genres": show.get("genres") or [], "year": str(show.get("premiered") or "")[:4],
+                                                "image": (show.get("image") or {}).get("medium") or "", "url": show.get("url") or "",
+                                                "airings": []})["airings"]
+            value = {"date": airdate, "time": airtime, "channel": channel_name, "episode": episode_label,
+                     "url": episode.get("url") or show.get("url") or ""}
+            if value not in airings: airings.append(value)
+    for show in shows.values():
+        show["airings"].sort(key=lambda item: (item.get("date", ""), item.get("time", ""), item.get("channel", "")))
+    return list(shows.values())
 
 
 def _best(rows, key, title, artist="", year=""):

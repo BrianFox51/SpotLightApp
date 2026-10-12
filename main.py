@@ -693,13 +693,17 @@ class App(ctk.CTk):
         """Load a category while keeping expired, non-favorited events out of view."""
         return [item for item in database.load_local_catalog(category) if self.event_is_visible(item, category)]
     def event_order(self, item):
-        """Order live events by date; keep favorited past events after upcoming ones."""
+        """Order live events by date, then verified user submissions by submission time."""
         date = event_end_date(item)
+        meta = self.meta.get(self.cat, g(item, "title"))
         if date is None:
             return (1, datetime.date.max, -float(g(item, "score", 0) or 0))
         if date < datetime.date.today():
             return (2, date, -float(g(item, "score", 0) or 0))
-        return (0, date, -float(g(item, "score", 0) or 0))
+        submitted_at = meta.get("submitted_at") if meta.get("user_submission") else ""
+        if submitted_at:
+            return (0, date, 0, submitted_at)
+        return (0, date, 1, -float(g(item, "score", 0) or 0))
     def favorite_button(self, parent, item):
         """Create the persistent per-user star used on catalog and search cards."""
         item_id = g(item, "id")
@@ -1122,7 +1126,8 @@ class App(ctk.CTk):
         platform_text = "   •   Platforms: " + ", ".join(platforms[:5]) if platforms else ""
         self.meta_lbl.configure(text=f"{sub_of(it)}   •   {self.genre_of(it)}   •   {lead}" + platform_text + (f"   •   {extra}" if extra else ""))
         self.cast_row.section_heading.configure(text="🎤  Artist / Musician" if cat == "music" else "👥  Cast & Crew")
-        self.ev_box.section_heading.configure(text="🛒  Where to Buy" if cat == "games" else "🌐  Event website & dates" if cat == "festivals" else "📍  Local Venues & Showtimes")
+        tv_airings = m.get("tvmaze_airings", []) if cat == "tv" else []
+        self.ev_box.section_heading.configure(text="🛒  Where to Buy" if cat == "games" else "🌐  Event website & dates" if cat == "festivals" else "📺  Channels & Airtimes" if cat == "tv" else "📍  Local Venues & Showtimes")
         desc_text = " ".join(str(g(it, "description") or "").split())
         if cat == "music":
             desc_text = re.sub(r"([A-Z]{2,})([A-Z][a-z])", r"\1 \2", desc_text)
@@ -1182,6 +1187,26 @@ class App(ctk.CTk):
                 ctk.CTkButton(self.ev_box, text="Source listing: OhioFestivals.net", fg_color=CARD, hover_color=HOVER,
                               command=lambda link=source_url: webbrowser.open(link)).pack(anchor="w", pady=(0, 6))
             ctk.CTkLabel(self.ev_box, text="Confirm event dates and details with the organizer.", text_color="#9aa0b5").pack(anchor="w")
+        elif cat == "tv" and tv_airings:
+            for airing in tv_airings[:20]:
+                row = ctk.CTkFrame(self.ev_box, fg_color=CARD, corner_radius=12); row.pack(fill="x", pady=4)
+                when = " · ".join(value for value in (airing.get("date", ""), airing.get("time", "")) if value)
+                lines = [f"📡  {airing.get('channel') or 'TV channel'}", f"🕒  {when} (channel local time)" if when else "Airtime not listed"]
+                if airing.get("episode"): lines.append(airing["episode"])
+                ctk.CTkLabel(row, text="\n".join(lines), font=("Segoe UI", 15), text_color="#cfd3e0",
+                             justify="left", anchor="w", wraplength=detail_width).pack(fill="x", padx=14, pady=10)
+                if airing.get("url"):
+                    ctk.CTkButton(row, text="TVmaze episode details", fg_color=CARD, hover_color=HOVER,
+                                  command=lambda link=airing["url"]: webbrowser.open(link)).pack(anchor="w", padx=10, pady=(0, 8))
+            attribution = ctk.CTkLabel(self.ev_box, text="TV listings by TVmaze · Creative Commons BY-SA",
+                                       text_color="#9aa0b5", font=("Segoe UI", 10), cursor="hand2")
+            attribution.pack(anchor="w", padx=4, pady=(3, 0)); attribution.bind("<Button-1>", lambda _event: webbrowser.open("https://www.tvmaze.com/api"))
+        elif cat == "tv" and not evs:
+            ctk.CTkLabel(self.ev_box, text="No channel airtimes found for this title in the current 7-day U.S. guide.",
+                         text_color="#9aa0b5", anchor="w", wraplength=detail_width).pack(anchor="w", pady=(2, 6))
+            query = urllib.parse.quote(title)
+            ctk.CTkButton(self.ev_box, text="Search TVmaze listings", fg_color=CARD, hover_color=HOVER,
+                          command=lambda: webbrowser.open("https://www.tvmaze.com/search?q=" + query)).pack(anchor="w")
         elif not evs and not is_streaming:
             ctk.CTkLabel(self.ev_box, text="No saved dates yet. Search ticket vendors:", text_color="#888").pack(anchor="w"); self.vendor_row(self.ev_box, title, cat)
         for ev in evs:
@@ -1200,7 +1225,7 @@ class App(ctk.CTk):
             for index, (label, url, color) in enumerate(links):
                 ctk.CTkButton(right, text=label, fg_color=color, hover_color=HOVER if color != "#1E7A34" else "#27a046",
                               command=lambda u=url: webbrowser.open(u)).grid(row=index // link_columns, column=index % link_columns, padx=3, pady=2, sticky="ew")
-        self.set_section_visible(self.ev_box, cat == "games" or bool(evs) or not is_streaming,
+        self.set_section_visible(self.ev_box, cat == "games" or bool(evs) or bool(tv_airings) or not is_streaming,
                                  before=self.about_box if hasattr(self, "about_box") else None)
         if self.tmdb_detail_image is not None and cat in {"movies", "tv"}:
             self.tmdb_notes_mark.pack(fill="x", pady=(0, 6), before=self.notes)
@@ -1348,6 +1373,11 @@ class App(ctk.CTk):
             if res and res.get("yt_id") and self.auto_var.get(): self.play_trailer()
     def poster_dir(self): return POSTERS
     def open_promote(self):
+        if not (getattr(self.gate, "user", None) or {}).get("username"):
+            self.close_bio(); self.close_promote(); self.gate.show_login(); self.gate.lift()
+            try: self.gate.err.configure(text="Create a Spotlight profile or sign in to submit an event.")
+            except Exception: pass
+            return
         self.gate.place_forget(); self.close_bio(); self.close_promote(); self._promo = promote.PromoteForm(self, self.insp_box)
     def close_promote(self):
         if getattr(self, "_promo", None) is not None:
@@ -1437,6 +1467,56 @@ class App(ctk.CTk):
             self.show_genres()
         message = (f"OhioFestivals.net refreshed: {result.get('count', 0)} upcoming events; "
                    f"{result.get('removed', 0)} older listings removed. Confirm dates with organizers.")
+        self.publish_dashboard_update(message)
+        if say: say(message)
+
+    def sync_tvmaze(self, say, on_complete=None):
+        """Fetch this week's US broadcast schedule and add channel/airtime details to TV cards."""
+        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
+        say("Gathering US TV channel schedules and airtimes…")
+        def work():
+            try:
+                shows = online.tvmaze_schedule(days=7)
+            except Exception as exc:
+                self.uiq.put((say, (f"TV guide refresh unavailable: {exc}",)))
+                done(); return
+            self.uiq.put((self.apply_tvmaze, (shows, say)))
+            done()
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_tvmaze(self, shows, say=None):
+        """Merge TVmaze airings into matching TV titles and create cards for guide-only shows."""
+        existing = {g(item, "title").casefold(): item for item in database.load_local_catalog("tv")
+                    if not self.is_watchmode_item(item, "tv")}
+        rows, keep_ids, now = [], [], int(time.time())
+        for show in shows:
+            title = str(show.get("title") or "").strip()
+            if not title: continue
+            key = title.casefold(); match = existing.get(key)
+            meta = self.meta.d.setdefault(f"tv|{title}", {})
+            genres = show.get("genres") or []
+            meta.update({"tvmaze_airings": show.get("airings", []), "tvmaze_url": show.get("url", ""),
+                         "tvmaze_genres": genres, "tvmaze_updated_at": now,
+                         "genre": (genres[0] if genres else meta.get("genre", "Other"))})
+            if not match:
+                first = (show.get("airings") or [{}])[0]
+                year = str(show.get("year") or "")[:4]
+                recent = "Next: " + " · ".join(value for value in (first.get("date", ""), first.get("time", "")) if value)
+                rows.append(("tv", {"title": title, "sub": "TV Guide", "year": year, "url": show.get("url", ""),
+                                     "score": 50, "desc": "TV listings and airtimes from TVmaze.", "first_shown": year,
+                                     "recent_shown": recent, "srcs": ["TVmaze"]}))
+                keep_ids.append(database.media_id("tv", title, "TV Guide"))
+            elif g(match, "sub") == "TV Guide":
+                keep_ids.append(g(match, "id"))
+        database.save_media_items(rows)
+        database.prune_category_source("tv", "TVmaze", keep_ids)
+        self.meta.save()
+        dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
+        message = f"TV guide refreshed: {len(shows)} shows with channel and airtime details for the next 7 days."
+        if self.cat == "tv" and self.sel is None and not dashboard_visible:
+            self.items = self.load_catalog_items("tv"); self.show_genres()
+        elif self.sel is not None and self.sel_cat == "tv":
+            self.render_detail(self.sel)
         self.publish_dashboard_update(message)
         if say: say(message)
     def sync_tmdb(self, say, token, status_callback=None, on_complete=None):

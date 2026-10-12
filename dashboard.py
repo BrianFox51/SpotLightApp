@@ -346,7 +346,7 @@ class Gate(ctk.CTkFrame):
             save_api_keys()
             s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal")]
             s.refresh_controls.extend((button, "normal") for button in s.dashboard_action_buttons)
-            s.set_refreshing(True, jobs=5)
+            s.set_refreshing(True, jobs=6)
             current = events.load_cfg()
             report = lambda key, state, message: s.app.uiq.put((s.update_api_status, (key, state, message)))
             done = s.refresh_job_finished
@@ -360,6 +360,7 @@ class Gate(ctk.CTkFrame):
             start_refresh(s.app.sync_ohio_schedules, s.say)
             start_refresh(s.app.sync_watchmode, s.say, current.get("watchmode_key", ""), report)
             start_refresh(s.app.sync_igdb, s.say, current.get("igdb_client_id", ""), saved_api_value("igdb_client_secret", current), report)
+            start_refresh(s.app.sync_tvmaze, s.say)
 
         refresh_button = ctk.CTkButton(area_row, text="🔄  Refresh", width=125, command=refresh_all)
         refresh_button.pack(side="left", padx=(10, 0))

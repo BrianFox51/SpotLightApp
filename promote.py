@@ -28,8 +28,11 @@ class PromoteForm(ctk.CTkFrame):
     def build(s):
         b = s.body
         ctk.CTkLabel(b, text="📣  Promote your event", font=("Segoe UI", 30, "bold")).pack(anchor="w", padx=14, pady=(4, 0))
-        ctk.CTkLabel(b, text="Free founding listings for local sports, fairs and festivals. A curator checks each event before it goes live for everyone; until then you can see it in your own app.",
+        ctk.CTkLabel(b, text="Free listings for local sports, fairs and festivals. A registered Spotlight profile is required. A curator reviews each listing before it goes live. For the same event date, approved user submissions appear above third-party listings; user submissions are ordered first-come, first-served by submission time.",
                      wraplength=760, justify="left", anchor="w", text_color="#9aa0b5").pack(anchor="w", padx=14, pady=(0, 10))
+        if not (getattr(s.app.gate, "user", None) or {}).get("username"):
+            ctk.CTkLabel(b, text="Sign in with a registered Spotlight profile to submit an event.",
+                         text_color="#f0cf78", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=14, pady=(0, 8))
         r = s.row(); s.field(r, "title", "Event name *", "Circleville Pumpkin Show", 480)
         r = s.row(); ctk.CTkLabel(r, text="Category *", text_color="#9aa0b5", font=("Segoe UI", 12)).pack(anchor="w")
         r = s.row(); s.cat = ctk.CTkSegmentedButton(r, values=list(community.CAT_NAMES.values()), command=s.set_cat); s.cat.pack(side="left", padx=(0, 12))
@@ -52,12 +55,14 @@ class PromoteForm(ctk.CTkFrame):
         key = next(k for k, v in community.CAT_NAMES.items() if v == name); vals = community.TYPES[key]; s.type.configure(values=vals); s.type.set(vals[0])
 
     def submit(s):
+        if not (getattr(s.app.gate, "user", None) or {}).get("username"):
+            s.msg.configure(text="Sign in with a registered Spotlight profile before submitting an event."); return
         form = {k: w.get().strip() for k, w in s.f.items()}; form["description"] = s.desc.get("1.0", "end").strip()
         form["category"] = next(k for k, v in community.CAT_NAMES.items() if v == s.cat.get()); form["type"] = s.type.get()
         if not s.ok.get(): s.msg.configure(text="Please tick the box to confirm you may promote this event."); return
         ev, errs = community.validate(form)
         if errs: s.msg.configure(text="\n".join("• " + x for x in errs)); return
-        s.msg.configure(text=""); community.add_mine(ev)
+        s.msg.configure(text=""); ev = community.add_mine(ev)
         s.app.apply_community({"meta": community.save_events([ev], s.app.poster_dir(), "Community (pending)")}); s.ev = ev; s.result(ev); s.refresh()
 
     def result(s, ev):

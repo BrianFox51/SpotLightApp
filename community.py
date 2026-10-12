@@ -9,7 +9,7 @@ TYPES = {"sports": ["Baseball", "Basketball", "Football", "Hockey", "Soccer", "G
          "festivals": ["Harvest & Food", "County & State Fairs", "Music Festivals", "Arts & Crafts", "Parades & Holidays", "Cultural", "Film Festivals", "Car Shows", "Renaissance & Fantasy"]}
 CAT_NAMES = {"sports": "Sports & Events", "festivals": "Festivals & Fairs"}
 MINE = os.path.join(database.HOME, "my_submissions.json"); CACHE = os.path.join(database.HOME, "community_feed.json")
-PRIVATE = ("contact_email", "submitted_at")
+PRIVATE = ("contact_email",)
 
 
 def feed_url(): return events.load_cfg().get("community_feed_url") or DEFAULT_FEED_URL
@@ -53,6 +53,11 @@ def validate(f, allow_past=False, need_email=True):
     if len(e["description"]) < 20: errs.append("Description needs at least 20 characters.")
     e["contact_email"] = str(f.get("contact_email", "") or "").strip()[:120]
     if need_email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e["contact_email"]): errs.append("A contact email is required (it is never shown publicly).")
+    submitted_at = str(f.get("submitted_at", "") or "").strip()
+    if submitted_at:
+        try: submitted_at = datetime.datetime.fromisoformat(submitted_at).isoformat(timespec="seconds")
+        except ValueError: submitted_at = ""
+    if submitted_at: e["submitted_at"] = submitted_at
     if not errs: e["id"] = make_id(e)
     return e, errs
 
@@ -81,7 +86,9 @@ def save_events(evs, poster_dir, source="Community"):
         item = {"title": e["title"], "sub": e["venue"], "year": e["date"][:4], "url": e["ticket_url"], "score": float(max(1, 100 - max(days, 0))), "desc": e["description"][:200],
                 "first_shown": "Community listing", "recent_shown": "Next: " + label(e), "srcs": [source]}
         database.save_media_item(e["category"], item, [], [{"venue": e["venue"], "time": label(e), "location": loc, "purchase_url": e["ticket_url"]}])
-        meta[(e["category"], e["title"])] = {"genre": e["type"], "online_v3": True, "community": True, "about": e["description"] + (f"\n\nListed by {e['organizer']}" if e.get("organizer") else ""),
+        meta[(e["category"], e["title"])] = {"genre": e["type"], "online_v3": True, "community": True,
+                                              "user_submission": bool(e.get("submitted_at")), "submitted_at": e.get("submitted_at", ""),
+                                              "about": e["description"] + (f"\n\nListed by {e['organizer']}" if e.get("organizer") else ""),
                                               "buy_url": e["ticket_url"], "buy_label": "Tickets / info" + (f" · {e['price']}" if e.get("price") else "")}
         p = os.path.join(poster_dir, re.sub(r"[^a-z0-9]+", "-", e["title"].lower()).strip("-") + ".jpg")
         if e.get("image_url") and not os.path.exists(p):
@@ -125,7 +132,11 @@ def load_mine():
     except Exception: return []
 def _save_mine(L):
     with open(MINE, "w", encoding="utf-8") as f: json.dump(L, f, indent=1)
-def add_mine(e): _save_mine([x for x in load_mine() if x.get("id") != e["id"]] + [{**e, "submitted_at": datetime.datetime.now().isoformat(timespec="seconds")}])
+def add_mine(e):
+    """Save a user's original submission time so same-day card order stays first-come, first-served."""
+    saved = {**e, "submitted_at": datetime.datetime.now().isoformat(timespec="seconds")}
+    _save_mine([x for x in load_mine() if x.get("id") != e["id"]] + [saved])
+    return saved
 def remove_mine(eid):
     mine = load_mine()
     for x in mine:
