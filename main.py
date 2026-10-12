@@ -1,5 +1,5 @@
 """Spotlight - Local Media Dashboard. Install required packages from requirements.txt."""
-import os, re, sys, json, math, time, queue, zlib, shutil, threading, subprocess, importlib.util, webbrowser, urllib.request, urllib.parse, urllib.error
+import os, re, sys, json, math, time, queue, zlib, shutil, threading, subprocess, importlib.util, webbrowser, urllib.request, urllib.parse, urllib.error, datetime
 import tkinter as tk
 from tkinter import messagebox, filedialog, font as tkfont
 import numpy as np
@@ -61,6 +61,50 @@ GENRES = {"music": [("Pop", "🎤"), ("Hip-Hop", "🎧"), ("Rock", "🎸"), ("El
 def g(r, k, d=""):
     try: v = r[k]; return d if v is None else v
     except Exception: return d
+
+def event_end_date(item):
+    """Read an event's end date from its display label, including short ranges."""
+    label = str(g(item, "recent_shown", "") or "")
+    match = re.search(r"\b([A-Za-z]{3,9})\s+(\d{1,2}),\s*(\d{4})\b", label)
+    if not match:
+        iso_date = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", label)
+        if not iso_date:
+            return None
+        try:
+            return datetime.date(*(int(value) for value in iso_date.groups()))
+        except ValueError:
+            return None
+    date_text = " ".join(match.groups())
+    try:
+        start = datetime.datetime.strptime(date_text, "%b %d %Y").date()
+    except ValueError:
+        try:
+            start = datetime.datetime.strptime(date_text, "%B %d %Y").date()
+        except ValueError:
+            return None
+
+    # Ohio schedule entries abbreviate the end of ranges, e.g. "Oct 9, 2026 – Oct 11".
+    end_match = re.match(r"\s*[–—-]\s*(?:([A-Za-z]{3,9})\s+)?(\d{1,2})(?:,\s*(\d{4}))?", label[match.end():])
+    if not end_match:
+        return start
+    month_name, day, year = end_match.groups()
+    if month_name:
+        try:
+            month = datetime.datetime.strptime(month_name, "%b").month
+        except ValueError:
+            try:
+                month = datetime.datetime.strptime(month_name, "%B").month
+            except ValueError:
+                month = start.month
+    else:
+        month = start.month
+    try:
+        end = datetime.date(int(year or start.year), month, int(day))
+        if end < start and not year:
+            end = end.replace(year=end.year + 1)
+        return end
+    except ValueError:
+        return start
 def sub_of(it):
     for k in ("sub", "subtitle", "studio", "artist", "creator"):
         if g(it, k): return g(it, k)
@@ -339,6 +383,7 @@ def bind_all(w, fn):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__(); self.title("Spotlight - Local Media Dashboard"); self.geometry("1440x880"); self.minsize(1100, 700); self.configure(fg_color=BG)
+        self.protocol("WM_DELETE_WINDOW", self.close_app)
         self.meta, self.cat, self.genre, self.items, self.sel, self.imgs, self.cards, self.online, self._rs = Meta(), "music", None, [], None, [], {}, None, None
         database.prune_expired_watchmode(int(time.time()) - 30 * 86400)
         self._prune_watchmode_metadata()
@@ -348,6 +393,39 @@ class App(ctk.CTk):
         self.cast_all = self._tproc = None
         self.load_logos(); self.after(300, self.set_icon)
         self.seed(); self.build(); self.start_sentinel(); self.poll_status(); self.poll_ui(); self.bind("<Configure>", self.on_resize); self.home(); self.gate = dashboard.Gate(self, BASE); self.after(3000, self.sync_community)
+
+    def close_app(self):
+        """Stop embedded media and child windows before closing the main application window."""
+        try:
+            # Hide immediately so a slow media shutdown cannot leave a black app window behind.
+            self.withdraw()
+            for stage_name in ("hero", "theater"):
+                stage = getattr(self, stage_name, None)
+                if stage is not None:
+                    try:
+                        stage.gen += 1
+                        stage.vlc_stop()
+                        if stage.vp is not None: stage.vp.release(); stage.vp = None
+                        if stage.vinst is not None: stage.vinst.release(); stage.vinst = None
+                    except Exception:
+                        pass
+            trailer_process = getattr(self, "_tproc", None)
+            if trailer_process is not None and trailer_process.poll() is None:
+                try:
+                    trailer_process.terminate()
+                except Exception:
+                    pass
+            for window in self.winfo_children():
+                if isinstance(window, tk.Toplevel):
+                    try:
+                        window.destroy()
+                    except Exception:
+                        pass
+        finally:
+            try: self.quit()
+            except Exception: pass
+            try: self.destroy()
+            except Exception: pass
 
     # ---------- data ----------
     def seed(self):
@@ -604,6 +682,24 @@ class App(ctk.CTk):
     def favorite_user_key(self):
         user = getattr(getattr(self, "gate", None), "user", None) or {}
         return user.get("username") or "__guest__"
+    def event_is_visible(self, item, category=None):
+        """Hide past event cards unless this user explicitly favorited them."""
+        category = category or g(item, "category", self.cat)
+        if category not in UNIT:
+            return True
+        end_date = event_end_date(item)
+        return end_date is None or end_date >= datetime.date.today() or database.is_favorite(self.favorite_user_key(), g(item, "id"))
+    def load_catalog_items(self, category):
+        """Load a category while keeping expired, non-favorited events out of view."""
+        return [item for item in database.load_local_catalog(category) if self.event_is_visible(item, category)]
+    def event_order(self, item):
+        """Order live events by date; keep favorited past events after upcoming ones."""
+        date = event_end_date(item)
+        if date is None:
+            return (1, datetime.date.max, -float(g(item, "score", 0) or 0))
+        if date < datetime.date.today():
+            return (2, date, -float(g(item, "score", 0) or 0))
+        return (0, date, -float(g(item, "score", 0) or 0))
     def favorite_button(self, parent, item):
         """Create the persistent per-user star used on catalog and search cards."""
         item_id = g(item, "id")
@@ -618,6 +714,17 @@ class App(ctk.CTk):
         active = not database.is_favorite(user_key, item_id)
         database.set_favorite(user_key, item_id, active)
         button.configure(text="★" if active else "☆", text_color="#ffd84d" if active else "#a8aab2")
+        item_category = item.get("_search_category", self.cat) if isinstance(item, dict) else self.cat
+        if not active and item_category in UNIT and not self.event_is_visible(item, item_category):
+            if item_category == self.cat:
+                self.items = [row for row in self.items if g(row, "id") != item_id]
+            if self.search_active:
+                self.search_results = [(cat, row) for cat, row in self.search_results if g(row, "id") != item_id]
+                self.show_search_results()
+            elif item_category == self.cat and self.genre is None:
+                self.show_genres()
+            elif item_category == self.cat:
+                self.show_feed(self.genre)
         if getattr(self, "gate", None) is not None and self.gate.winfo_ismapped():
             self.gate.update_dashboard_stats()
     def bind_card(self, widget, callback, excluded=None):
@@ -640,7 +747,7 @@ class App(ctk.CTk):
     def hover_open(self, cat):
         if self.pinned or self.sel is not None: return
         if self._hj: self.after_cancel(self._hj); self._hj = None
-        self.cat = cat; self.items = list(database.load_local_catalog(cat)); self.mark_nav(cat); self.show_genres(); self.show_panel()
+        self.cat = cat; self.items = self.load_catalog_items(cat); self.mark_nav(cat); self.show_genres(); self.show_panel()
     def hover_leave(self, e=None):
         if self.pinned: return
         if self._hj: self.after_cancel(self._hj)
@@ -670,7 +777,7 @@ class App(ctk.CTk):
     def open_cat(self, cat):
         self.cat, self.sel = cat, None; acc = ACC[cat]
         self.hero.configure(height=190 if cat in {"movies", "tv"} else 150)
-        self.items = list(database.load_local_catalog(cat)); self.mark_nav(cat)
+        self.items = self.load_catalog_items(cat); self.mark_nav(cat)
         name = next(n for k, _, n in NAV if k == cat)
         amb = os.path.join(MEDIA, "ambient", cat + ".mp4")
         self.hero.play(amb, FXK[cat], acc, None, (name.upper(), TAG[cat]), dim=0.65)
@@ -682,6 +789,7 @@ class App(ctk.CTk):
         self.show_genres(); self.show_panel()
     def show_genres(self):
         self.search_active = False; self.search_results = []
+        self.items = [item for item in self.items if self.event_is_visible(item, self.cat)]
         self.genre = None; self.back.pack_forget(); self.feed_title.configure(text="Events" if self.cat in UNIT else "Genres")
         for w in self.list.winfo_children(): w.destroy()
         self.reset_list_scroll()
@@ -761,7 +869,11 @@ class App(ctk.CTk):
                 rows = [item for item in self.items if not self.is_watchmode_item(item, self.cat) and self.genre_of(item) == genre]
             else:
                 rows = [item for item in self.items if genre == "All" or self.genre_of(item) == genre]
-        rows.sort(key=lambda item: -float(g(item, "score", 0) or 0))
+        rows = [item for item in rows if self.event_is_visible(item, self.cat)]
+        if self.cat in UNIT:
+            rows.sort(key=self.event_order)
+        else:
+            rows.sort(key=lambda item: -float(g(item, "score", 0) or 0))
         page_size = 25
         page_count = max(1, (len(rows) + page_size - 1) // page_size)
         self.page = min(max(0, self.page), page_count - 1)
@@ -845,7 +957,7 @@ class App(ctk.CTk):
         scope = [self.cat] if self.search_scope.get() == "This section" else list(ACC)
         matches = []
         for category in scope:
-            for item in database.load_local_catalog(category):
+            for item in self.load_catalog_items(category):
                 metadata = self.meta.get(category, g(item, "title"))
                 searchable = online._norm(" ".join((g(item, "title"), sub_of(item), g(item, "description"),
                                                        g(item, "year"), metadata.get("genre", ""), metadata.get("watchmode_genre", ""), metadata.get("music_genre", ""),
@@ -950,7 +1062,7 @@ class App(ctk.CTk):
         it = self.shown[n]
         category = it.get("_search_category", self.cat)
         if category != self.cat:
-            self.cat = category; self.items = list(database.load_local_catalog(category)); self.mark_nav(category)
+            self.cat = category; self.items = self.load_catalog_items(category); self.mark_nav(category)
             name = next(label for key, _icon, label in NAV if key == category)
             self.hero.configure(height=190 if category in {"movies", "tv"} else 150)
             self.hero.play(os.path.join(MEDIA, "ambient", category + ".mp4"), FXK[category], ACC[category], None,
@@ -1295,8 +1407,9 @@ class App(ctk.CTk):
     def apply_sync(self, res, search_label="near you"):
         for (cat, title), kw in res["meta"].items(): self.meta.d.setdefault(f"{cat}|{title}", {}).update(kw)
         self.meta.save()
-        if self.cat == "music" and self.sel is None:
-            self.items = list(database.load_local_catalog("music"))
+        dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
+        if self.cat == "music" and self.sel is None and not dashboard_visible:
+            self.items = self.load_catalog_items("music")
         self.publish_dashboard_update(f"Done: {res['music']} concerts/music events, {res['sports']} sports, and {res['festivals']} festivals and fairs found {search_label}.")
 
     def sync_ohio_schedules(self, say, on_complete=None):
@@ -1318,8 +1431,9 @@ class App(ctk.CTk):
         for entry in result.get("entries", []):
             self.meta.d.setdefault(f"festivals|{entry['title']}", {}).update(entry.get("meta", {}))
         self.meta.save()
-        if self.cat == "festivals" and self.sel is None:
-            self.items = list(database.load_local_catalog("festivals"))
+        dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
+        if self.cat == "festivals" and self.sel is None and not dashboard_visible:
+            self.items = self.load_catalog_items("festivals")
             self.show_genres()
         message = (f"OhioFestivals.net refreshed: {result.get('count', 0)} upcoming events; "
                    f"{result.get('removed', 0)} older listings removed. Confirm dates with organizers.")
@@ -1456,7 +1570,7 @@ class App(ctk.CTk):
                     row["result"] = result
         genres_index = {int(row["id"]): row.get("name", "") for row in catalogs.get("genres", []) if row.get("id") is not None}
         platforms_index = {int(row["id"]): row.get("name") or row.get("abbreviation", "") for row in catalogs.get("platforms", []) if row.get("id") is not None}
-        counts = {"popular": 0, "upcoming": 0}
+        counts = {"popular": 0, "upcoming": 0}; media_rows = []
         existing_games = {g(item, "title").casefold(): item for item in database.load_local_catalog("games")}
         for entry in merged.values():
             result = entry["result"]; title = str(result.get("name") or "").strip()
@@ -1478,8 +1592,8 @@ class App(ctk.CTk):
             first_label = release_date or "Release date TBA"
             flags = "Popular on IGDB" if entry["popular"] else "Upcoming release"
             sub = g(existing_games.get(title.casefold()), "sub") or company
-            database.save_media_item("games", {"title": title, "sub": sub, "year": year, "url": "https://www.igdb.com/games/" + str(result.get("slug") or ""),
-                "score": score, "desc": result.get("summary") or "", "first_shown": first_label, "recent_shown": flags, "srcs": ["IGDB"]})
+            media_rows.append(("games", {"title": title, "sub": sub, "year": year, "url": "https://www.igdb.com/games/" + str(result.get("slug") or ""),
+                "score": score, "desc": result.get("summary") or "", "first_shown": first_label, "recent_shown": flags, "srcs": ["IGDB"]}))
             metadata = self.meta.d.setdefault(f"games|{title}", {})
             metadata.update({"igdb_id": result.get("id"), "igdb_genres": genres, "igdb_platforms": platforms,
                              "igdb_popular": entry["popular"], "igdb_upcoming": entry["upcoming"], "igdb_catalog_at": now})
@@ -1488,11 +1602,13 @@ class App(ctk.CTk):
                 metadata["igdb_video_id"] = videos[0]["video_id"]
             counts["popular"] += int(entry["popular"]); counts["upcoming"] += int(entry["upcoming"])
             for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
+        database.save_media_items(media_rows)
         self.meta.save()
         total = len(merged)
         message = f"IGDB refreshed: {counts['popular']} popular and {counts['upcoming']} upcoming games; {total} unique titles with genre and platform data."
         if say: say(message)
-        if self.cat == "games" and self.sel is None:
+        dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
+        if self.cat == "games" and self.sel is None and not dashboard_visible:
             self.items = list(database.load_local_catalog("games")); self.show_genres()
         elif self.sel is not None and self.sel_cat == "games":
             self.render_detail(self.sel)
@@ -1500,7 +1616,7 @@ class App(ctk.CTk):
 
     def apply_watchmode(self, catalogs, say=None):
         """Store one bounded page per media type; source links are loaded on demand."""
-        now = int(time.time()); keep_ids = {"movies": [], "tv": []}; totals = {}
+        now = int(time.time()); keep_ids = {"movies": [], "tv": []}; totals = {}; media_rows = []
         for cat, api_cat in (("movies", "movies"), ("tv", "tv")):
             rows = catalogs.get(api_cat, []) or []; totals[api_cat] = len(rows)
             for result in rows:
@@ -1516,43 +1632,46 @@ class App(ctk.CTk):
                 except (TypeError, ValueError): score = 0
                 watch_id = result.get("id") or result.get("title_id")
                 if watch_id is None: continue
-                database.save_media_item(cat, {
+                media_rows.append((cat, {
                     "title": title, "sub": "Streaming", "year": year, "url": "", "score": score,
                     "desc": overview, "first_shown": year, "recent_shown": "Available to stream in the US",
                     "srcs": ["Watchmode"],
-                })
+                }))
                 keep_ids[cat].append(database.media_id(cat, title, "Streaming"))
                 meta = self.meta.d.setdefault(f"{cat}|{title}", {})
                 meta.update({"watchmode_genre": genre, "watchmode_genres": genres, "watchmode_id": watch_id, "watchmode_catalog": True,
                              "watchmode_type": result.get("type") or ("Movie" if cat == "movies" else "TV Series"), "watchmode_catalog_at": now})
                 for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
+        database.save_media_items(media_rows)
         pruned = sum(database.prune_category_source(cat, "Watchmode", keep_ids[cat]) for cat in ("movies", "tv"))
         for key in [key for key in self.meta.d if key.startswith("streaming|")]: self.meta.d.pop(key, None)
         self.meta.save()
         message = f"Watchmode refreshed: {totals.get('movies', 0)} movies and {totals.get('tv', 0)} TV series listed; {pruned} stale items removed."
         if say: say(message)
-        if self.cat in {"movies", "tv"} and self.sel is None:
+        dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
+        if self.cat in {"movies", "tv"} and self.sel is None and not dashboard_visible:
             self.items = list(database.load_local_catalog(self.cat)); self.show_genres()
         self.publish_dashboard_update(message)
     def apply_tmdb(self, catalogs, say=None):
-        now = int(time.time()); added = {"movies": 0, "tv": 0}; updated = {"movies": 0, "tv": 0}
+        now = int(time.time()); added = {"movies": 0, "tv": 0}; updated = {"movies": 0, "tv": 0}; media_rows = []
         for cat in ("movies", "tv"):
             existing = {g(item, "title").casefold(): item for item in database.load_local_catalog(cat) if not self.is_watchmode_item(item, cat)}
             for result in catalogs.get(cat, []):
                 title = result["title"]
                 old = existing.get(title.casefold())
                 sub = g(old, "sub") or ("Now playing" if cat == "movies" else "Currently airing")
-                database.save_media_item(cat, {
+                media_rows.append((cat, {
                     "title": title, "sub": sub, "year": result["year"], "url": result["url"],
                     "score": result["score"], "desc": result["overview"],
                     "first_shown": result["date"] or ("Now playing" if cat == "movies" else "Currently airing"),
                     "recent_shown": "Now playing" if cat == "movies" else "Currently airing", "srcs": ["TMDB"],
-                })
+                }))
                 if old: updated[cat] += 1
                 else: added[cat] += 1
                 metadata = self.meta.d.setdefault(f"{cat}|{title}", {})
                 metadata.update({"genre": result["genre"], "tmdb_id": result["id"], "tmdb_url": result["url"], "tmdb_catalog": True, "tmdb_catalog_updated": now})
                 for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
+        database.save_media_items(media_rows)
         self.meta.save()
         movie_total = len(database.load_local_catalog("movies")); tv_total = len(database.load_local_catalog("tv"))
         details = f"TMDB updated: {added['movies']} new movies, {updated['movies']} refreshed; {added['tv']} new TV shows, {updated['tv']} refreshed."

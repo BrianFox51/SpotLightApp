@@ -1,10 +1,13 @@
 """Spotlight startup gate: Mythic Mask Works banner, sign in / create account / guest, then the Dashboard with live stats.
 Put the banner PNG (Mythic_Mask_Works_promotional_banner2.png) next to main.py, or in its media/ or assets/ folder."""
-import os, glob, json, urllib.request, webbrowser
+import os, glob, json, re, shutil, threading, urllib.request, webbrowser, time
+from datetime import datetime
+from tkinter import filedialog
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageOps
 import database
 import events
+import community
 import local_secrets
 
 BG, PANEL, CARD, HOVER, GOLD = "#0b0b11", "#12121a", "#1a1a26", "#28283e", "#c9a45c"
@@ -96,6 +99,12 @@ class Gate(ctk.CTkFrame):
             return
         s.refresh_jobs_left = max(0, s.refresh_jobs_left - 1)
         if s.refresh_jobs_left == 0:
+            refreshed_at = int(time.time())
+            cfg = events.load_cfg()
+            cfg["last_refresh_at"] = refreshed_at
+            events.save_cfg(cfg)
+            if getattr(s, "last_refresh_label", None) is not None and s.last_refresh_label.winfo_exists():
+                s.last_refresh_label.configure(text="Last refreshed: " + datetime.fromtimestamp(refreshed_at).strftime("%b %d, %Y at %I:%M %p"))
             s.set_refreshing(False)
             s.update_dashboard_stats()
             s.say("Refresh complete.")
@@ -131,8 +140,10 @@ class Gate(ctk.CTkFrame):
     # ---------- sign in / create account / guest ----------
     def show_login(s):
         s.clear(); s.header(); p=s.page
-        tabs = ctk.CTkTabview(p, width=460, height=250, fg_color=PANEL); tabs.pack(pady=8)
-        si, su = tabs.add("Sign In"), tabs.add("Create Account")
+        ctk.CTkLabel(p, text="Beta version 0.1", font=("Segoe UI", 13, "bold"),
+                     text_color=GOLD).pack(pady=(2, 4))
+        tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
+        si, su = tabs.add("Sign In"), tabs.add("Create Profile")
         cfg = events.load_cfg()
         u1 = ctk.CTkEntry(si, placeholder_text="Username", width=320); u1.pack(pady=(14, 6))
         remembered_user = cfg.get("remembered_username", "")
@@ -146,20 +157,80 @@ class Gate(ctk.CTkFrame):
         p1.bind("<Return>", lambda e: s.do_login(u1.get(), p1.get(), remember.get()))
         recovery = ctk.CTkFrame(si, fg_color="transparent"); recovery.pack(pady=(0, 4))
         ctk.CTkButton(recovery, text="Forgot username?", width=130, height=24, fg_color="transparent", hover_color=HOVER,
-                      text_color="#78aef5", command=lambda: s.show_recovery_message("Username recovery is not set up yet. You can continue as a guest while we add account recovery.")).pack(side="left", padx=3)
+                      text_color="#85899a", state="disabled").pack(side="left", padx=3)
         ctk.CTkButton(recovery, text="Forgot password?", width=130, height=24, fg_color="transparent", hover_color=HOVER,
-                      text_color="#78aef5", command=lambda: s.show_recovery_message("Password reset is not set up yet. Passwords are stored as secure hashes and cannot be recovered; reset support will be added later.")).pack(side="left", padx=3)
-        u2 = ctk.CTkEntry(su, placeholder_text="Username (3+ characters)", width=320); u2.pack(pady=(10, 4))
-        p2 = ctk.CTkEntry(su, placeholder_text="Password (6+ characters)", show="•", width=320); p2.pack(pady=4)
-        z2 = ctk.CTkEntry(su, placeholder_text="ZIP code (finds events near you)", width=320); z2.pack(pady=4)
-        ctk.CTkButton(su, text="Create Account", width=320, command=lambda: s.do_signup(u2.get(), p2.get(), z2.get())).pack(pady=10)
+                      text_color="#85899a", state="disabled").pack(side="left", padx=3)
+        ctk.CTkLabel(si, text="Account recovery is temporarily unavailable.", text_color="#85899a", font=("Segoe UI", 11)).pack(pady=(0, 4))
+        form = ctk.CTkScrollableFrame(su, fg_color="transparent", width=540, height=430); form.pack(fill="both", expand=True, padx=8, pady=6)
+        ctk.CTkLabel(form, text="Build your Spotlight profile", font=("Segoe UI", 19, "bold"), text_color=GOLD).pack(anchor="w", padx=12, pady=(4, 2))
+        ctk.CTkLabel(form, text="Required for your account and local event discovery. Your profile stays on this PC.", text_color="#9aa0b5", wraplength=500, justify="left").pack(anchor="w", padx=12, pady=(0, 7))
+        full_name = ctk.CTkEntry(form, placeholder_text="Full name", width=500); full_name.pack(pady=4)
+        u2 = ctk.CTkEntry(form, placeholder_text="Username (3+ characters)", width=500); u2.pack(pady=4)
+        p2 = ctk.CTkEntry(form, placeholder_text="Password (6+ characters)", show="•", width=500); p2.pack(pady=4)
+        email = ctk.CTkEntry(form, placeholder_text="Email address (required for local account recovery)", width=500); email.pack(pady=4)
+        location_row = ctk.CTkFrame(form, fg_color="transparent"); location_row.pack(fill="x", padx=16, pady=4)
+        z2 = ctk.CTkEntry(location_row, placeholder_text="ZIP code", width=240); z2.pack(side="left", padx=(0, 8))
+        state_entry = ctk.CTkEntry(location_row, placeholder_text="State (2-letter code)", width=240); state_entry.pack(side="left")
+        ctk.CTkLabel(form, text="Optional community profile details", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=(9, 2))
+        ctk.CTkLabel(form, text="About you", text_color="#9aa0b5").pack(anchor="w", padx=14, pady=(4, 0))
+        bio = ctk.CTkTextbox(form, width=500, height=70); bio.pack(pady=4)
+        interests = ctk.CTkEntry(form, placeholder_text="Favorite genres, teams, artists, or games", width=500); interests.pack(pady=4)
+        website = ctk.CTkEntry(form, placeholder_text="Website or social link (optional)", width=500); website.pack(pady=4)
+        avatar = {"path": ""}
+        avatar_status = ctk.CTkLabel(form, text="No profile photo selected", text_color="#9aa0b5")
+        avatar_status.pack(anchor="w", padx=14, pady=(5, 0))
+        ctk.CTkButton(form, text="Choose profile photo", width=180, command=lambda: s.choose_avatar(avatar, avatar_status)).pack(anchor="w", padx=12, pady=(3, 6))
+        ctk.CTkButton(form, text="Create Profile", width=300, height=40,
+                      command=lambda: s.do_signup(u2.get(), p2.get(), z2.get(), full_name=full_name.get(), state=state_entry.get(),
+                                                  email=email.get(), bio=bio.get("1.0", "end-1c"), interests=interests.get(),
+                                                  website=website.get(), avatar_path=avatar["path"])).pack(pady=8)
         s.err = ctk.CTkLabel(p, text="", text_color="#ff6b6b", font=("Segoe UI", 13)); s.err.pack()
         ctk.CTkButton(p, text="Continue as guest", fg_color=CARD, hover_color=HOVER, command=s.guest).pack(pady=6)
         s.sponsor_footer(p)
 
-    def show_recovery_message(s, message):
-        try: s.err.configure(text=message)
-        except Exception: pass
+    def choose_avatar(s, avatar, status):
+        selected = filedialog.askopenfilename(title="Choose a profile photo", filetypes=[("Images", "*.png *.jpg *.jpeg *.webp")])
+        if not selected: return
+        try:
+            with Image.open(selected) as image: image.verify()
+            folder = os.path.join(database.HOME, "profile_images"); os.makedirs(folder, exist_ok=True)
+            destination = os.path.join(folder, os.path.basename(selected))
+            if os.path.abspath(selected) != os.path.abspath(destination):
+                root, ext = os.path.splitext(destination); number = 1
+                while os.path.exists(destination):
+                    destination = f"{root}_{number}{ext}"; number += 1
+                shutil.copy2(selected, destination)
+            avatar["path"] = destination; status.configure(text=f"Selected: {os.path.basename(destination)}")
+        except Exception as exc:
+            status.configure(text=f"Could not load that image: {exc}", text_color="#ff6b6b")
+
+    def recover_account(s, mode):
+        dialog = ctk.CTkToplevel(s.app); dialog.title("Recover Spotlight account"); dialog.geometry("440x390" if mode == "password" else "440x270"); dialog.configure(fg_color=BG); dialog.transient(s.app)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL); panel.pack(fill="both", expand=True, padx=18, pady=18)
+        ctk.CTkLabel(panel, text="Forgot username?" if mode == "username" else "Reset password on this PC", font=("Segoe UI", 18, "bold")).pack(pady=(14, 5))
+        ctk.CTkLabel(panel, text="Enter the email and ZIP code saved to your local profile." if mode == "username" else "This verifies the local profile on this PC; Spotlight does not send recovery email.", text_color="#9aa0b5", wraplength=360, justify="center").pack(pady=(0, 8))
+        username = ctk.CTkEntry(panel, placeholder_text="Username", width=340) if mode == "password" else None
+        if username: username.pack(pady=5)
+        email_box = ctk.CTkEntry(panel, placeholder_text="Account email", width=340); email_box.pack(pady=5)
+        zip_box = ctk.CTkEntry(panel, placeholder_text="ZIP code", width=340); zip_box.pack(pady=5)
+        new_password = ctk.CTkEntry(panel, placeholder_text="New password (6+ characters)", show="•", width=340) if mode == "password" else None
+        if new_password: new_password.pack(pady=5)
+        result = ctk.CTkLabel(panel, text="", text_color="#ff6b6b", wraplength=350); result.pack(pady=4)
+        def submit():
+            if mode == "username":
+                recovered = database.username_for_recovery(email_box.get(), zip_box.get())
+                result.configure(text=f"Username: {recovered}" if recovered else "No matching local profile was found.", text_color="#77d18b" if recovered else "#ff6b6b")
+                return
+            password = new_password.get()
+            if len(password) < 6: result.configure(text="Password needs at least 6 characters."); return
+            if database.reset_password_locally(username.get(), email_box.get(), zip_box.get(), password):
+                cfg = events.load_cfg()
+                if str(cfg.get("remembered_username", "")).strip().lower() == username.get().strip().lower():
+                    cfg.pop("remembered_password_dpapi", None); events.save_cfg(cfg)
+                result.configure(text="Password reset. You can sign in now.", text_color="#77d18b")
+            else: result.configure(text="No matching local profile was found.")
+        ctk.CTkButton(panel, text="Find username" if mode == "username" else "Reset password", width=200, command=submit).pack(pady=7)
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
 
     def remember_credentials(s, username, password, enabled):
         cfg = events.load_cfg()
@@ -178,16 +249,36 @@ class Gate(ctk.CTkFrame):
         s.remember_credentials(u, p, remember)
         s.user = user; s.show_dashboard()
 
-    def do_signup(s, u, p, z):
-        u, z = u.strip(), z.strip()
+    def do_signup(s, u, p, z, *, full_name="", state="", email="", bio="", interests="", website="", avatar_path=""):
+        u, z, state, email, full_name = u.strip(), z.strip(), state.strip().upper(), email.strip(), full_name.strip()
+        if not full_name: return s.err.configure(text="Enter your name.")
         if len(u) < 3: return s.err.configure(text="Username needs at least 3 characters.")
         if len(p) < 6: return s.err.configure(text="Password needs at least 6 characters.")
-        if z and not (z.isdigit() and len(z) == 5): return s.err.configure(text="Enter a 5-digit US ZIP code, or leave it blank.")
-        city, state, lat, lng = lookup_zip(z) if z else ("", "", None, None)
-        ok, msg = database.create_user(u, p, z, city, state, lat, lng)
-        if not ok: return s.err.configure(text=msg)
-        s.user = database.verify_user(u, p)
-        s.remember_credentials(u, p, True)
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email): return s.err.configure(text="Enter a valid email address for account recovery.")
+        if not (z.isdigit() and len(z) == 5): return s.err.configure(text="Enter a 5-digit US ZIP code.")
+        if not re.fullmatch(r"[A-Z]{2}", state): return s.err.configure(text="Enter your 2-letter state code, such as OH.")
+        if website and not re.match(r"^https?://", website.strip(), re.I): website = "https://" + website.strip()
+        s.err.configure(text="Creating your profile and looking up the ZIP code…", text_color="#c9a45c")
+        def worker():
+            try:
+                city, found_state, lat, lng = lookup_zip(z)
+                if found_state and found_state.upper() != state:
+                    s.app.uiq.put((s.finish_signup, (u, p, False, f"ZIP code belongs to {found_state}; check your state entry."))); return
+                ok, msg = database.create_user(u, p, z, city, found_state or state, lat, lng, full_name=full_name, email=email,
+                                               bio=bio, interests=interests, website=website, avatar_path=avatar_path)
+                s.app.uiq.put((s.finish_signup, (u, p, ok, msg)))
+            except Exception as exc:
+                s.app.uiq.put((s.finish_signup, (u, p, False, f"Could not create the profile: {exc}")))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_signup(s, username, password, ok, message):
+        if not ok:
+            try:
+                if s.err.winfo_exists(): s.err.configure(text=message, text_color="#ff6b6b")
+            except Exception: pass
+            return
+        s.user = database.verify_user(username, password)
+        s.remember_credentials(username, password, True)
         s.show_dashboard()
 
     def guest(s):
@@ -195,7 +286,9 @@ class Gate(ctk.CTkFrame):
 
     # ---------- dashboard ----------
     def say(s, msg):
-        try: s.status.configure(text=msg)
+        if isinstance(msg, dict):
+            msg = msg.get("message") or msg.get("state") or ""
+        try: s.status.configure(text=str(msg))
         except Exception: pass
 
     def show_dashboard(s, status=""):
@@ -203,6 +296,18 @@ class Gate(ctk.CTkFrame):
         u = s.user or {"display_name": "Guest", "city": "", "state": ""}; city, state = u.get("city") or "", u.get("state") or ""
         st = database.dashboard_stats(city, state, u.get("username") or "__guest__"); c = st["cats"]
         s.logo_label(190)
+        if s.user and s.user.get("username"):
+            avatar_path = s.user.get("avatar_path") or ""
+            avatar_image = None
+            try:
+                with Image.open(avatar_path) as source:
+                    crop = ImageOps.fit(source.convert("RGB"), (112, 112))
+                avatar_image = ctk.CTkImage(light_image=crop, dark_image=crop, size=(56, 56)); s.imgs.append(avatar_image)
+            except (OSError, ValueError, TypeError):
+                avatar_image = None
+            avatar_button = ctk.CTkButton(p, text="" if avatar_image else "👤", image=avatar_image, width=64, height=64,
+                                           corner_radius=32, fg_color=CARD, hover_color=HOVER, state="disabled")
+            avatar_button.place(relx=0.97, y=10, anchor="ne")
         ctk.CTkLabel(p, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
         where = ", ".join(x for x in (city, state) if x) or "No location set: create an account with a ZIP code to see what's near you"
         ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14)).pack(pady=(2, 22))
@@ -359,22 +464,34 @@ class Gate(ctk.CTkFrame):
                       command=lambda: webbrowser.open("https://api.watchmode.com/")).pack(side="left")
         ctk.CTkButton(event_row, text="IGDB / Twitch", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
                       command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps")).pack(side="left")
-        s.status = ctk.CTkLabel(live, text=status or "Credentials stay in this PC's local Spotlight settings. □ not checked   ✓ working   × needs attention",
-                                text_color="#9aa0b5", font=("Segoe UI", 11), wraplength=560, justify="center"); s.status.pack(pady=(0, 4))
+        last_refresh_at = cfg.get("last_refresh_at")
+        last_refresh_text = "Last refreshed: " + (
+            datetime.fromtimestamp(last_refresh_at).strftime("%b %d, %Y at %I:%M %p")
+            if isinstance(last_refresh_at, (int, float)) and last_refresh_at > 0 else "Not yet refreshed"
+        )
+        s.last_refresh_label = ctk.CTkLabel(live, text=last_refresh_text,
+                                            text_color="#c9a45c", font=("Segoe UI", 11, "bold"))
+        s.last_refresh_label.pack(pady=(0, 2))
+        s.status = ctk.CTkLabel(live, text="",
+                                text_color="#9aa0b5", font=("Segoe UI", 11), wraplength=560, justify="center")
+        s.status.pack(pady=(0, 4))
         ctk.CTkLabel(live, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#9aa0b5", font=("Segoe UI", 11)).pack(pady=(0, 10))
         s.sponsor_footer(p)
         enter_button = ctk.CTkButton(dashboard_actions, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.place_forget)
         enter_button.pack(side="left", padx=8)
         promote_button = ctk.CTkButton(dashboard_actions, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote)
         promote_button.pack(side="left", padx=8)
-        community_button = ctk.CTkButton(dashboard_actions, text="🔄 Community", width=120, height=46, fg_color=CARD, hover_color=HOVER, command=lambda: s.app.sync_community(s.say))
+        community_available = False
+        community_button = ctk.CTkButton(dashboard_actions, text="🌐 Community", width=130, height=46, fg_color=CARD, hover_color=HOVER,
+                                         state="disabled")
         community_button.pack(side="left", padx=8)
         signout_button = ctk.CTkButton(dashboard_actions, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out)
         signout_button.pack(side="left", padx=8)
         s.dashboard_action_buttons = [enter_button, promote_button, community_button, signout_button]
         s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal")]
-        s.refresh_controls.extend((button, "normal") for button in s.dashboard_action_buttons)
+        s.refresh_controls.extend((button, "disabled" if button is community_button and not community_available else "normal") for button in s.dashboard_action_buttons)
         if s.refreshing: s.set_refreshing(True, jobs=s.refresh_jobs_left)
+        ctk.CTkLabel(p, text="Community and profile tools are paused until their service and windows are ready.", text_color="#85899a", font=("Segoe UI", 11)).pack(pady=(0, 8))
 
     def update_dashboard_stats(s):
         """Refresh the visible count cards without clearing or rebuilding the dashboard."""
@@ -388,6 +505,120 @@ class Gate(ctk.CTkFrame):
         for label, value in zip(s.stats_value_labels, values):
             try: label.configure(text=str(value))
             except Exception: pass
+
+    def show_profile_editor(s):
+        if not s.user or not s.user.get("username"):
+            s.say("Create a Spotlight profile to edit your account details."); return
+        user = database.get_user(s.user["username"])
+        dialog = ctk.CTkToplevel(s.app); dialog.title("Your Spotlight profile"); dialog.geometry("600x720"); dialog.minsize(520, 620); dialog.configure(fg_color=BG); dialog.transient(s.app)
+        form = ctk.CTkScrollableFrame(dialog, fg_color=PANEL); form.pack(fill="both", expand=True, padx=16, pady=16)
+        ctk.CTkLabel(form, text="Your profile", font=("Segoe UI", 22, "bold"), text_color=GOLD).pack(anchor="w", padx=12, pady=(8, 4))
+        ctk.CTkLabel(form, text="Your details are stored on this PC. Public profile sharing is not enabled in the current local community feed.",
+                     text_color="#9aa0b5", wraplength=500, justify="left").pack(anchor="w", padx=12, pady=(0, 10))
+        def field(label, placeholder, value=""):
+            ctk.CTkLabel(form, text=label, text_color="#cfd3e0").pack(anchor="w", padx=14, pady=(5, 0))
+            entry = ctk.CTkEntry(form, placeholder_text=placeholder, width=500); entry.pack(padx=10, pady=3); entry.insert(0, value or ""); return entry
+        name = field("Full name", "Your name", user.get("full_name") or user.get("display_name"))
+        email = field("Email", "name@example.com", user.get("email"))
+        zip_box = field("ZIP code", "5-digit ZIP", user.get("zip"))
+        state = field("State", "Two-letter code", user.get("state"))
+        ctk.CTkLabel(form, text="About you", text_color="#cfd3e0").pack(anchor="w", padx=14, pady=(7, 0))
+        bio = ctk.CTkTextbox(form, width=500, height=80); bio.pack(padx=10, pady=3); bio.insert("1.0", user.get("bio") or "")
+        interests = field("Interests", "Genres, teams, artists, games", user.get("interests"))
+        website = field("Website or social link", "https://…", user.get("website"))
+        avatar = {"path": user.get("avatar_path") or ""}
+        avatar_status = ctk.CTkLabel(form, text=os.path.basename(avatar["path"]) if avatar["path"] else "No profile photo selected", text_color="#9aa0b5")
+        avatar_status.pack(anchor="w", padx=14, pady=(8, 0))
+        ctk.CTkButton(form, text="Choose or replace photo", width=190, command=lambda: s.choose_avatar(avatar, avatar_status)).pack(anchor="w", padx=12, pady=5)
+        error = ctk.CTkLabel(form, text="", text_color="#ff6b6b", wraplength=500); error.pack(pady=4)
+        def save():
+            email_value = email.get().strip(); zip_value = zip_box.get().strip(); state_value = state.get().strip().upper()
+            if not name.get().strip(): error.configure(text="Enter your name."); return
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email_value): error.configure(text="Enter a valid email address."); return
+            if not (zip_value.isdigit() and len(zip_value) == 5): error.configure(text="Enter a 5-digit ZIP code."); return
+            if not re.fullmatch(r"[A-Z]{2}", state_value): error.configure(text="Enter a two-letter state code."); return
+            values = {"full_name": name.get(), "email": email_value, "zip": zip_value, "state": state_value,
+                      "city": user.get("city", ""), "lat": user.get("lat"), "lng": user.get("lng"),
+                      "bio": bio.get("1.0", "end-1c"), "interests": interests.get(),
+                      "website": website.get(), "avatar_path": avatar["path"]}
+            save_button.configure(state="disabled"); error.configure(text="Saving profile and checking ZIP code…", text_color=GOLD)
+            def worker():
+                try:
+                    city, zip_state, lat, lng = lookup_zip(zip_value)
+                    if zip_state and zip_state.upper() != state_value:
+                        result = (False, f"That ZIP code belongs to {zip_state}.")
+                    else:
+                        same_zip = zip_value == str(user.get("zip") or "")
+                        values.update({"state": zip_state or state_value, "city": city or (values["city"] if same_zip else ""),
+                                       "lat": lat if lat is not None else (values["lat"] if same_zip else None),
+                                       "lng": lng if lng is not None else (values["lng"] if same_zip else None)})
+                        result = database.update_user_profile(user["username"], values)
+                except Exception as exc: result = (False, f"Could not save the profile: {exc}")
+                s.app.uiq.put((s.finish_profile_update, (dialog, user["username"], error, save_button, *result)))
+            threading.Thread(target=worker, daemon=True).start()
+        save_button = ctk.CTkButton(form, text="Save profile", width=220, height=40, command=save); save_button.pack(pady=(6, 14))
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+
+    def finish_profile_update(s, dialog, username, error, save_button, ok, message):
+        if not ok:
+            try:
+                if error.winfo_exists(): error.configure(text=message, text_color="#ff6b6b")
+                if save_button.winfo_exists(): save_button.configure(state="normal")
+            except Exception: pass
+            return
+        s.user = database.get_user(username)
+        try:
+            if dialog.winfo_exists(): dialog.destroy()
+        except Exception: pass
+        if s.winfo_ismapped(): s.show_dashboard(message)
+
+    def show_community_hub(s):
+        if not community.feed_url():
+            s.say("Community is paused until a shared event feed is configured."); return
+        dialog = ctk.CTkToplevel(s.app); dialog.title("Spotlight Community"); dialog.geometry("560x500"); dialog.configure(fg_color=BG); dialog.transient(s.app)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL); panel.pack(fill="both", expand=True, padx=18, pady=18)
+        ctk.CTkLabel(panel, text="Spotlight Community", font=("Segoe UI", 24, "bold"), text_color=GOLD).pack(pady=(18, 6))
+        user = s.user or {}
+        ctk.CTkLabel(panel, text=f"Welcome, {user.get('full_name') or user.get('display_name') or 'Guest'}",
+                     font=("Segoe UI", 17, "bold")).pack(pady=4)
+        if user.get("avatar_path"):
+            try:
+                with Image.open(user["avatar_path"]) as source: community_avatar = ImageOps.fit(source.convert("RGB"), (112, 112))
+                photo = ctk.CTkImage(light_image=community_avatar, dark_image=community_avatar, size=(56, 56)); s.imgs.append(photo)
+                ctk.CTkLabel(panel, text="", image=photo).pack(pady=4)
+            except (OSError, ValueError): pass
+        community_items = []
+        for category in ("sports", "festivals"):
+            for item in database.load_local_catalog(category):
+                try: sources = json.loads(item.get("sources") or "[]")
+                except (TypeError, ValueError): sources = []
+                if any(str(source).startswith("Community") for source in sources): community_items.append((category, item))
+        ctk.CTkLabel(panel, text=f"{len(community_items)} community event{'s' if len(community_items) != 1 else ''} saved on this PC",
+                     font=("Segoe UI", 16), text_color="#cfd3e0").pack(pady=(8, 4))
+        if not community.feed_url():
+            ctk.CTkLabel(panel, text="The shared event feed has not been configured yet. Local event submissions can still be prepared for review.",
+                         text_color="#d8bd76", wraplength=460, justify="center").pack(padx=28, pady=4)
+        ctk.CTkLabel(panel, text="Spotlight Community brings organizer-submitted events into one discoverable catalog. Listings are reviewed before they are shared through the configured public event feed.",
+                     text_color="#9aa0b5", wraplength=460, justify="center").pack(padx=28, pady=12)
+        ctk.CTkLabel(panel, text="Profiles and favorites are currently local to this PC. Cross-device member profiles, follows, comments, and messaging need a hosted community service and are not exposed as if they were already live.",
+                     text_color="#c9a45c", wraplength=460, justify="center").pack(padx=28, pady=8)
+        buttons = ctk.CTkFrame(panel, fg_color="transparent"); buttons.pack(pady=14)
+        if community_items:
+            ctk.CTkButton(buttons, text="Browse community events", command=lambda: s.browse_community_events(dialog, community_items)).pack(side="left", padx=5)
+        ctk.CTkButton(buttons, text="Refresh community listings", command=lambda: (dialog.destroy(), s.app.sync_community(s.say))).pack(side="left", padx=5)
+        ctk.CTkButton(buttons, text="Submit an event", fg_color="#9b6a1c", hover_color="#c48a2a",
+                      command=lambda: (dialog.destroy(), s.app.open_promote())).pack(side="left", padx=5)
+        ctk.CTkButton(panel, text="Close", fg_color=CARD, hover_color=HOVER, command=dialog.destroy).pack(pady=(0, 14))
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+
+    def browse_community_events(s, dialog, items):
+        dialog.destroy()
+        category = items[0][0]
+        s.app.gate.place_forget()
+        s.app.open_cat(category)
+        s.app.items = [item for item_category, item in items if item_category == category]
+        s.app.show_genres()
+        s.app.pick_genre("All")
 
     def sign_out(s):
         s.user = None; s.show_login()

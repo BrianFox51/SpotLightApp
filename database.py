@@ -66,6 +66,14 @@ def init_db():
         )
     """)
 
+    # Add profile fields without breaking accounts created by earlier versions.
+    user_columns = {row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()}
+    for name, declaration in (("email", "TEXT NOT NULL DEFAULT ''"), ("full_name", "TEXT NOT NULL DEFAULT ''"),
+                              ("bio", "TEXT NOT NULL DEFAULT ''"), ("interests", "TEXT NOT NULL DEFAULT ''"),
+                              ("website", "TEXT NOT NULL DEFAULT ''"), ("avatar_path", "TEXT NOT NULL DEFAULT ''")):
+        if name not in user_columns:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {name} {declaration}")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS favorites (
             username TEXT NOT NULL, media_id TEXT NOT NULL, created INTEGER NOT NULL,
@@ -127,6 +135,27 @@ def save_media_item(cat, item, cast_list=None, event_list=None):
     conn.commit()
     conn.close()
 
+def save_media_items(rows):
+    """Write a catalog batch in one SQLite transaction to keep refresh responsive."""
+    if not rows: return
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        for cat, item in rows:
+            media_id = hashlib.sha1(f"{cat}_{item['title']}_{item['sub']}".encode()).hexdigest()
+            existing = conn.execute("SELECT user_notes FROM media_items WHERE id = ?", (media_id,)).fetchone()
+            notes = existing[0] if existing else ""
+            conn.execute("""INSERT INTO media_items
+                (id, category, title, sub, year, url, score, description, user_notes, sources, first_shown, recent_shown, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET url=excluded.url, year=excluded.year, score=excluded.score,
+                description=excluded.description, sources=excluded.sources, first_shown=excluded.first_shown,
+                recent_shown=excluded.recent_shown, last_updated=excluded.last_updated""",
+                (media_id, cat, item["title"], item["sub"], item["year"], item["url"], item["score"], item["desc"],
+                 notes, json.dumps(item.get("srcs", [])), item.get("first_shown", ""), item.get("recent_shown", ""), int(time.time())))
+        conn.commit()
+    finally:
+        conn.close()
+
 def load_local_catalog(cat):
     """Retrieves cached media structures directly out of offline system storage."""
     conn = sqlite3.connect(DB_PATH)
@@ -166,17 +195,55 @@ def update_notes(media_id, notes):
 def _hash(pw, salt_hex):
     return hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"), bytes.fromhex(salt_hex), 200_000).hex()
 
-def create_user(username, password, zip_code="", city="", state="", lat=None, lng=None):
+def create_user(username, password, zip_code="", city="", state="", lat=None, lng=None, *, full_name="", email="", bio="", interests="", website="", avatar_path=""):
     """Returns (ok, message)."""
     key = username.strip().lower()
     conn = sqlite3.connect(DB_PATH)
     try:
         if conn.execute("SELECT 1 FROM users WHERE username = ?", (key,)).fetchone():
             return False, "That username is already taken."
+        if conn.execute("SELECT 1 FROM users WHERE lower(email) = lower(?) AND email <> ''", (email.strip(),)).fetchone():
+            return False, "That email is already linked to a Spotlight account."
         salt = os.urandom(16).hex()
-        conn.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?,?)",
-                     (key, username.strip(), salt, _hash(password, salt), zip_code, city, state, lat, lng, int(time.time())))
+        conn.execute("""INSERT INTO users (username, display_name, salt, pw_hash, zip, city, state, lat, lng, created,
+                     email, full_name, bio, interests, website, avatar_path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     (key, full_name.strip() or username.strip(), salt, _hash(password, salt), zip_code, city, state, lat, lng, int(time.time()),
+                      email.strip(), full_name.strip(), bio.strip(), interests.strip(), website.strip(), avatar_path.strip()))
         conn.commit(); return True, "ok"
+    finally: conn.close()
+
+def update_user_profile(username, fields):
+    """Update the editable profile for a local account, enforcing unique email addresses."""
+    key = username.strip().lower(); email = str(fields.get("email", "")).strip()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conflict = conn.execute("SELECT 1 FROM users WHERE lower(email) = lower(?) AND username <> ? AND email <> ''", (email, key)).fetchone()
+        if conflict: return False, "That email is already linked to another Spotlight account."
+        conn.execute("""UPDATE users SET display_name=?, full_name=?, email=?, zip=?, city=?, state=?, lat=?, lng=?,
+                     bio=?, interests=?, website=?, avatar_path=? WHERE username=?""",
+                     (fields.get("full_name", "").strip() or key, fields.get("full_name", "").strip(), email,
+                      fields.get("zip", ""), fields.get("city", ""), fields.get("state", ""), fields.get("lat"), fields.get("lng"),
+                      fields.get("bio", "").strip(), fields.get("interests", "").strip(), fields.get("website", "").strip(),
+                      fields.get("avatar_path", "").strip(), key))
+        conn.commit(); return True, "Profile saved."
+    finally: conn.close()
+
+def username_for_recovery(email, zip_code):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute("SELECT username FROM users WHERE lower(email)=lower(?) AND zip=?", (email.strip(), zip_code.strip())).fetchone()
+        return row[0] if row else None
+    finally: conn.close()
+
+def reset_password_locally(username, email, zip_code, new_password):
+    """Reset a local account password after matching its email and ZIP on this device."""
+    key = username.strip().lower(); conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute("SELECT 1 FROM users WHERE username=? AND lower(email)=lower(?) AND zip=?", (key, email.strip(), zip_code.strip())).fetchone()
+        if not row: return False
+        salt = os.urandom(16).hex()
+        conn.execute("UPDATE users SET salt=?, pw_hash=? WHERE username=?", (salt, _hash(new_password, salt), key))
+        conn.commit(); return True
     finally: conn.close()
 
 def verify_user(username, password):
@@ -186,6 +253,14 @@ def verify_user(username, password):
         r = conn.execute("SELECT * FROM users WHERE username = ?", (username.strip().lower(),)).fetchone()
         if r and _hash(password, r["salt"]) == r["pw_hash"]: return dict(r)
         return None
+    finally: conn.close()
+
+def get_user(username):
+    """Load a local account profile by username."""
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT * FROM users WHERE username=?", (username.strip().lower(),)).fetchone()
+        return dict(row) if row else None
     finally: conn.close()
 
 def dashboard_stats(city="", state="", username="__guest__"):
@@ -261,8 +336,11 @@ def prune_source(source, keep_ids):
     """Removes items that came from `source` (e.g. 'Community') but are no longer in the feed. Returns how many."""
     conn = sqlite3.connect(DB_PATH); keep = set(keep_ids)
     gone = [r[0] for r in conn.execute("SELECT id FROM media_items WHERE sources LIKE ?", (f'%"{source}"%',)).fetchall() if r[0] not in keep]
-    conn.close()
-    for i in gone: delete_item(i)
+    if gone:
+        marks = ",".join("?" for _ in gone)
+        for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"), ("favorites", "media_id"), ("media_items", "id")):
+            conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", gone)
+    conn.commit(); conn.close()
     return len(gone)
 
 
@@ -271,8 +349,11 @@ def prune_category_source(category, source, keep_ids):
     conn = sqlite3.connect(DB_PATH); keep = set(keep_ids)
     gone = [r[0] for r in conn.execute("SELECT id FROM media_items WHERE category = ? AND sources LIKE ?",
                                       (category, f'%"{source}"%')).fetchall() if r[0] not in keep]
-    conn.close()
-    for item_id in gone: delete_item(item_id)
+    if gone:
+        marks = ",".join("?" for _ in gone)
+        for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"), ("favorites", "media_id"), ("media_items", "id")):
+            conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", gone)
+    conn.commit(); conn.close()
     return len(gone)
 
 

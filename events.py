@@ -282,10 +282,12 @@ def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=No
             continue
         keep("music", ev, _music_genre(ev), music_genre=_music_genre(ev), music_type=_music_type(ev), music_artist=ev["attraction"]); n["music"] += 1
     say(f"Searching sports {area}…")
-    for ev in find_events(radius, classificationName="sports"): keep("sports", ev, _sport_genre(ev)); n["sports"] += 1
+    for ev in find_events(radius, classificationName="sports"):
+        if ev["days"] < 0: continue
+        keep("sports", ev, _sport_genre(ev)); n["sports"] += 1
     say("Searching festivals and fairs…"); seen = set()
     for kw in ("festival", "fair", "party", "harvest", "parade"):
         for ev in find_events(radius, keyword=kw):
-            if ev["id"] in seen or ev["segment"].lower() == "sports" or kw not in _norm(ev["name"]).replace(" ", ""): continue
+            if ev["days"] < 0 or ev["id"] in seen or ev["segment"].lower() == "sports" or kw not in _norm(ev["name"]).replace(" ", ""): continue
             seen.add(ev["id"]); keep("festivals", ev, _fest_genre(ev)); n["festivals"] += 1
     return {"meta": meta, **n}
