@@ -1,3 +1,4 @@
+from pydantic import AnyHttpUrl, model_validator
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 class RegisterRequest(BaseModel):
@@ -54,3 +55,29 @@ class FavoriteResponse(BaseModel):
     category: str
     provider_id: str
     created_at: datetime
+class SubmissionCreate(BaseModel):
+    event_type: str = Field(min_length=1, max_length=60)
+    venue: str = Field(min_length=1, max_length=255)
+    public_link: AnyHttpUrl | None = None
+    event_date_start: datetime
+    event_date_end: datetime | None = None
+    @model_validator(mode="after")
+    def validate_event_dates(self):
+        if self.event_date_start.utcoffset() is None:
+            raise ValueError("Start date must include a timezone")
+        if self.event_date_end is not None:
+            if self.event_date_end.utcoffset() is None:
+                raise ValueError("End date must include a timezone")
+            if self.event_date_end < self.event_date_start:
+                raise ValueError("End date must be after the start date")
+        return self
+class SubmissionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    event_type: str
+    venue: str
+    public_link: str | None
+    event_date_start: datetime
+    event_date_end: datetime | None
+    submitted_at: datetime
+    status: str
