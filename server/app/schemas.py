@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -44,3 +45,12 @@ class ProfileUpdate(BaseModel):
     interests: str | None = Field(default=None, max_length=4000)
     site: str | None = Field(default=None, max_length=255)
     avatar_ref: str | None = Field(default=None, max_length=255)
+class FavoriteCreate(BaseModel):
+    category: str = Field(min_length=1, max_length=60)
+    provider_id: str = Field(min_length=1, max_length=120)
+class FavoriteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    category: str
+    provider_id: str
+    created_at: datetime
