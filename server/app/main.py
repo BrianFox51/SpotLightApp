@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from app import models
+from app.auth import router as auth_router
 from app.config import settings
 from app.database import Base, SessionLocal, engine
 structlog.configure()
@@ -20,6 +21,7 @@ app = FastAPI(
     openapi_url="/api/v1/openapi.json",
     lifespan=lifespan,
 )
+app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
