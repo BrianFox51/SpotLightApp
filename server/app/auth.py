@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.config import settings
 from app.database import get_db
 from app.models import Account, Profile, Session as AccountSession
-from app.schemas import AccountResponse, LoginRequest, RegisterRequest, TokenResponse
+from app.schemas import AccountResponse, LoginRequest, RefreshRequest, RegisterRequest, RevokeRequest, TokenResponse
 from app.security import (
     create_access_token,
     create_refresh_token,
@@ -80,3 +81,31 @@ def login(payload: LoginRequest, db: DBSession = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
     return issue_tokens(db, account)
+@router.post("/refresh", response_model=TokenResponse)
+def refresh(payload: RefreshRequest, db: DBSession = Depends(get_db)):
+    token_hash = hashlib.sha256(payload.refresh_token.encode("utf-8")).hexdigest()
+    session = db.scalar(
+        select(AccountSession)
+        .where(AccountSession.token_hash == token_hash)
+        .with_for_update()
+    )
+    now = datetime.now(timezone.utc)
+    if session is None or session.revoked or session.expires_at <= now:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    account = db.get(Account, session.account_id)
+    if account is None or not account.is_active:
+        session.revoked = True
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    session.revoked = True
+    return issue_tokens(db, account)
+@router.post("/revoke")
+def revoke(payload: RevokeRequest, db: DBSession = Depends(get_db)):
+    token_hash = hashlib.sha256(payload.refresh_token.encode("utf-8")).hexdigest()
+    session = db.scalar(
+        select(AccountSession).where(AccountSession.token_hash == token_hash)
+    )
+    if session is not None and not session.revoked:
+        session.revoked = True
+        db.commit()
+    return {"status": "revoked"}
