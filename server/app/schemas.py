@@ -1,3 +1,4 @@
+from typing import Literal
 from pydantic import AnyHttpUrl, model_validator
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -81,3 +82,6 @@ class SubmissionResponse(BaseModel):
     event_date_end: datetime | None
     submitted_at: datetime
     status: str
+class ModerationRequest(BaseModel):
+    action: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, max_length=1000)

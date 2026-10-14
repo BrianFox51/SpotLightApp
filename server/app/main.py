@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from app import models
 from app.auth import router as auth_router
+from app.moderation import router as moderation_router
 from app.favorites import router as favorites_router
 from app.submissions import router as submissions_router
 from app.profile import router as profile_router
@@ -27,6 +28,7 @@ app = FastAPI(
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(favorites_router, prefix="/api/v1", tags=["favorites"])
 app.include_router(submissions_router, prefix="/api/v1", tags=["submissions"])
+app.include_router(moderation_router, prefix="/api/v1", tags=["moderation"])
 app.include_router(profile_router, prefix="/api/v1", tags=["profile"])
 app.add_middleware(
     CORSMiddleware,

@@ -35,3 +35,9 @@ def get_current_account(
     if account is None or not account.is_active:
         raise unauthorized
     return account
+def get_admin_account(
+    account: Account = Depends(get_current_account),
+) -> Account:
+    if account.role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator access required")
+    return account
