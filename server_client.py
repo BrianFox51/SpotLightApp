@@ -80,11 +80,11 @@ class ServerClient:
             {"email": email, "username": username, "password": password},
         )
 
-    def login(self, email: str, password: str) -> dict[str, Any]:
+    def login(self, identifier: str, password: str) -> dict[str, Any]:
         return self._request(
             "POST",
             "/auth/login",
-            {"email": email, "password": password},
+            {"identifier": identifier, "password": password},
         )
 
     def refresh(self, refresh_token: str) -> dict[str, Any]:

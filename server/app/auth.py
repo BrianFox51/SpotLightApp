@@ -66,10 +66,24 @@ def register(payload: RegisterRequest, db: DBSession = Depends(get_db)):
             detail="Email or username is already in use",
         )
     return account
+
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: DBSession = Depends(get_db)):
-    email = str(payload.email).lower()
-    account = db.scalar(select(Account).where(Account.email == email))
+    login_identifier = (
+        payload.identifier
+        if payload.identifier is not None
+        else str(payload.email)
+    ).strip().lower()
+
+    account = db.scalar(
+        select(Account).where(
+            or_(
+                Account.email == login_identifier,
+                Account.username == login_identifier,
+            )
+        )
+    )
+
     if (
         account is None
         or not account.is_active
@@ -77,9 +91,10 @@ def login(payload: LoginRequest, db: DBSession = Depends(get_db)):
     ):
         raise HTTPException(
             status_code=401,
-            detail="Invalid email or password",
+            detail="Invalid email, username, or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     return issue_tokens(db, account)
 @router.post("/refresh", response_model=TokenResponse)
 def refresh(payload: RefreshRequest, db: DBSession = Depends(get_db)):

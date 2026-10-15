@@ -11,8 +11,14 @@ class RegisterRequest(BaseModel):
     )
     password: str = Field(min_length=12, max_length=128)
 class LoginRequest(BaseModel):
-    email: EmailStr
+    identifier: str | None = Field(default=None, min_length=1, max_length=255)
+    email: EmailStr | None = None
     password: str = Field(min_length=1, max_length=128)
+    @model_validator(mode="after")
+    def require_identifier(self):
+        if not self.identifier and not self.email:
+            raise ValueError("Enter an email address or username")
+        return self
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=1, max_length=256)
 class RevokeRequest(BaseModel):
