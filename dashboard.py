@@ -1,5 +1,5 @@
 """Spotlight startup gate: Mythic Mask Works banner, sign in / create account / guest, then the Dashboard with live stats.
-Put the banner PNG (Mythic_Mask_Works_promotional_banner2.png) next to main.py, or in its media/ or assets/ folder."""
+Branding images are loaded from the project media/ folder, with root/assets fallbacks."""
 import os, glob, json, re, shutil, threading, urllib.request, webbrowser, time
 from datetime import datetime
 from tkinter import filedialog
@@ -140,7 +140,7 @@ class Gate(ctk.CTkFrame):
     # ---------- sign in / create account / guest ----------
     def show_login(s):
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 0.1", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 0.1.1.0", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")

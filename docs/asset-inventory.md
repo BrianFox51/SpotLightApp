@@ -4,8 +4,8 @@ This file records which visual assets are intended for a public source repositor
 
 | File | Purpose | Known source | Public status |
 |---|---|---|---|
-| `LightWave_logo.png` | SpotLight logo used on the sign-in and dashboard screens. | Project owner says they created it. | Cleared by owner for publication. |
-| `Mythic Mask Works promotional banner2.png` | Business banner shown on the sign-in screen. | Project owner says they created it. | Cleared by owner for publication. |
+| `media/LightWave_logo.png` | SpotLight logo used on the sign-in and dashboard screens. | Project owner says they created it. | Cleared by owner for publication. |
+| `media/Mythic Mask Works promotional banner2.png` | Business banner shown on the sign-in screen. | Project owner says they created it. | Cleared by owner for publication. |
 | `media/spotlight.ico` | Windows application icon. | Project owner says they created it. | Cleared by owner for publication. |
 | `media/tmdb/tmdb_footer.png` | TMDB wordmark at the bottom of the sign-in page. | Supplied by project owner as a transparent PNG; matching original SVG is retained. | Used in the app; displayed without changing its colors or proportions. |
 | `media/tmdb/tmdb_cinema.png` | TMDB logo under the SpotLight wordmark in Cinema Feeds. | Supplied by project owner as a transparent PNG; matching original SVG is retained. | Used in the app; displayed without changing its colors or proportions. |

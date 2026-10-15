@@ -59,8 +59,8 @@ Command-line helper for validating, listing, adding, removing, and pruning entri
 | `media/videos/` | Legacy location searched for existing local title videos; new videos are saved to the user-data folder. |
 | `media/ambient/` | Optional category background videos. `main.py` falls back to generated visuals when a video is absent. |
 | User-data media folders | Created by `main.py` if missing. Existing poster, backdrop, and people caches are copied there without overwriting newer files. |
-| `LightWave_logo.png` | Logo loaded by the dashboard. |
-| `Mythic Mask Works promotional banner2.png` | Branding image loaded by the dashboard. |
+| `media/LightWave_logo.png` | Logo loaded by the dashboard. |
+| `media/Mythic Mask Works promotional banner2.png` | Branding image loaded by the dashboard. |
 | `media/spotlight.ico` | Application icon. |
 
 ## Stored data outside the project
