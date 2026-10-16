@@ -145,49 +145,189 @@ class Gate(ctk.CTkFrame):
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
+
+        sign_in_form = ctk.CTkScrollableFrame(
+            si, fg_color="transparent", width=540, height=470
+        )
+        sign_in_form.pack(fill="both", expand=True, padx=8, pady=6)
+
         cfg = events.load_cfg()
-        u1 = ctk.CTkEntry(si, placeholder_text="Username or email", width=320); u1.pack(pady=(14, 6))
+
+        ctk.CTkLabel(
+            sign_in_form,
+            text="Username or email",
+            width=320,
+            anchor="w",
+            font=("Segoe UI", 13, "bold"),
+            text_color="#cfd3e0",
+        ).pack(pady=(10, 0))
+        u1 = ctk.CTkEntry(
+            sign_in_form,
+            placeholder_text="Enter username or email",
+            width=320,
+        )
+        u1.pack(pady=(3, 6))
+
         remembered_user = cfg.get("remembered_username", "")
-        if remembered_user: u1.insert(0, remembered_user)
-        p1 = ctk.CTkEntry(si, placeholder_text="Password", show="•", width=320); p1.pack(pady=6)
+        if remembered_user:
+            u1.insert(0, remembered_user)
+
+        ctk.CTkLabel(
+            sign_in_form,
+            text="Password",
+            width=320,
+            anchor="w",
+            font=("Segoe UI", 13, "bold"),
+            text_color="#cfd3e0",
+        ).pack(pady=(4, 0))
+        p1 = ctk.CTkEntry(
+            sign_in_form,
+            placeholder_text="Enter password",
+            show="•",
+            width=320,
+        )
+        p1.pack(pady=(3, 6))
+
         remember = ctk.BooleanVar(value=cfg.get("remember_me", True))
-        remembered_password = local_secrets.unprotect_text(cfg.get("remembered_password_dpapi", ""))
-        if remember.get() and remembered_password: p1.insert(0, remembered_password)
-        ctk.CTkCheckBox(si, text="Remember password on this PC (securely)", variable=remember).pack(anchor="w", padx=70, pady=(2, 2))
-        ctk.CTkButton(si, text="Sign In", width=320, command=lambda: s.do_login(u1.get(), p1.get(), remember.get())).pack(pady=8)
+        remembered_password = local_secrets.unprotect_text(
+            cfg.get("remembered_password_dpapi", "")
+        )
+        if remember.get() and remembered_password:
+            p1.insert(0, remembered_password)
+
+        ctk.CTkCheckBox(
+            sign_in_form,
+            text="Remember password on this PC (securely)",
+            variable=remember,
+        ).pack(anchor="w", padx=70, pady=(2, 2))
+
+        ctk.CTkButton(
+            sign_in_form,
+            text="Sign In",
+            width=320,
+            command=lambda: s.do_login(u1.get(), p1.get(), remember.get()),
+        ).pack(pady=8)
+
+        s.login_err = ctk.CTkLabel(
+            sign_in_form,
+            text="",
+            text_color="#ff6b6b",
+            font=("Segoe UI", 13),
+            wraplength=500,
+        )
+        s.login_err.pack(pady=(0, 4))
         p1.bind("<Return>", lambda e: s.do_login(u1.get(), p1.get(), remember.get()))
-        recovery = ctk.CTkFrame(si, fg_color="transparent"); recovery.pack(pady=(0, 4))
-        ctk.CTkButton(recovery, text="Forgot username?", width=130, height=24, fg_color="transparent", hover_color=HOVER,
-                      text_color="#85899a", state="disabled").pack(side="left", padx=3)
-        ctk.CTkButton(recovery, text="Forgot password?", width=130, height=24, fg_color="transparent", hover_color=HOVER,
-                      text_color="#85899a", state="disabled").pack(side="left", padx=3)
-        ctk.CTkLabel(si, text="Account recovery is temporarily unavailable.", text_color="#85899a", font=("Segoe UI", 11)).pack(pady=(0, 4))
-        form = ctk.CTkScrollableFrame(su, fg_color="transparent", width=540, height=430); form.pack(fill="both", expand=True, padx=8, pady=6)
-        ctk.CTkLabel(form, text="Build your Spotlight profile", font=("Segoe UI", 19, "bold"), text_color=GOLD).pack(anchor="w", padx=12, pady=(4, 2))
-        ctk.CTkLabel(form, text="Required for your account and local event discovery. Your profile stays on this PC.", text_color="#9aa0b5", wraplength=500, justify="left").pack(anchor="w", padx=12, pady=(0, 7))
-        full_name = ctk.CTkEntry(form, placeholder_text="Full name", width=500); full_name.pack(pady=4)
-        u2 = ctk.CTkEntry(form, placeholder_text="Username (3+ characters)", width=500); u2.pack(pady=4)
-        p2 = ctk.CTkEntry(form, placeholder_text="Password (6+ characters)", show="•", width=500); p2.pack(pady=4)
-        email = ctk.CTkEntry(form, placeholder_text="Email address (required for local account recovery)", width=500); email.pack(pady=4)
-        location_row = ctk.CTkFrame(form, fg_color="transparent"); location_row.pack(fill="x", padx=16, pady=4)
-        z2 = ctk.CTkEntry(location_row, placeholder_text="ZIP code", width=240); z2.pack(side="left", padx=(0, 8))
-        state_entry = ctk.CTkEntry(location_row, placeholder_text="State (2-letter code)", width=240); state_entry.pack(side="left")
-        ctk.CTkLabel(form, text="Optional community profile details", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=(9, 2))
-        ctk.CTkLabel(form, text="About you", text_color="#9aa0b5").pack(anchor="w", padx=14, pady=(4, 0))
-        bio = ctk.CTkTextbox(form, width=500, height=70); bio.pack(pady=4)
-        interests = ctk.CTkEntry(form, placeholder_text="Favorite genres, teams, artists, or games", width=500); interests.pack(pady=4)
-        website = ctk.CTkEntry(form, placeholder_text="Website or social link (optional)", width=500); website.pack(pady=4)
+
+        recovery = ctk.CTkFrame(sign_in_form, fg_color="transparent")
+        recovery.pack(pady=(0, 4))
+        ctk.CTkButton(
+            recovery, text="Forgot username?", width=130, height=24,
+            fg_color="transparent", hover_color=HOVER,
+            text_color="#85899a", state="disabled",
+        ).pack(side="left", padx=3)
+        ctk.CTkButton(
+            recovery, text="Forgot password?", width=130, height=24,
+            fg_color="transparent", hover_color=HOVER,
+            text_color="#85899a", state="disabled",
+        ).pack(side="left", padx=3)
+        ctk.CTkLabel(
+            sign_in_form,
+            text="Account recovery is temporarily unavailable.",
+            text_color="#85899a",
+            font=("Segoe UI", 11),
+        ).pack(pady=(0, 4))
+
+        ctk.CTkButton(
+            sign_in_form,
+            text="Continue as guest",
+            fg_color=CARD,
+            hover_color=HOVER,
+            command=s.guest,
+        ).pack(pady=(8, 4))
+        s.sponsor_footer(sign_in_form)
+
+        form = ctk.CTkScrollableFrame(
+            su, fg_color="transparent", width=540, height=430
+        )
+        form.pack(fill="both", expand=True, padx=8, pady=6)
+        ctk.CTkLabel(
+            form, text="Build your Spotlight profile",
+            font=("Segoe UI", 19, "bold"), text_color=GOLD,
+        ).pack(anchor="w", padx=12, pady=(4, 2))
+        ctk.CTkLabel(
+            form,
+            text="Required for your account and local event discovery. Your profile stays on this PC.",
+            text_color="#9aa0b5", wraplength=500, justify="left",
+        ).pack(anchor="w", padx=12, pady=(0, 7))
+
+        full_name = ctk.CTkEntry(form, placeholder_text="Full name", width=500)
+        full_name.pack(pady=4)
+        u2 = ctk.CTkEntry(form, placeholder_text="Username (3+ characters)", width=500)
+        u2.pack(pady=4)
+        p2 = ctk.CTkEntry(form, placeholder_text="Password (6+ characters)", show="•", width=500)
+        p2.pack(pady=4)
+        email = ctk.CTkEntry(
+            form, placeholder_text="Email address (required for local account recovery)",
+            width=500,
+        )
+        email.pack(pady=4)
+
+        location_row = ctk.CTkFrame(form, fg_color="transparent")
+        location_row.pack(fill="x", padx=16, pady=4)
+        z2 = ctk.CTkEntry(location_row, placeholder_text="ZIP code", width=240)
+        z2.pack(side="left", padx=(0, 8))
+        state_entry = ctk.CTkEntry(
+            location_row, placeholder_text="State (2-letter code)", width=240
+        )
+        state_entry.pack(side="left")
+
+        ctk.CTkLabel(
+            form, text="Optional community profile details",
+            font=("Segoe UI", 14, "bold"),
+        ).pack(anchor="w", padx=12, pady=(9, 2))
+        ctk.CTkLabel(form, text="About you", text_color="#9aa0b5").pack(
+            anchor="w", padx=14, pady=(4, 0)
+        )
+        bio = ctk.CTkTextbox(form, width=500, height=70)
+        bio.pack(pady=4)
+        interests = ctk.CTkEntry(
+            form, placeholder_text="Favorite genres, teams, artists, or games",
+            width=500,
+        )
+        interests.pack(pady=4)
+        website = ctk.CTkEntry(
+            form, placeholder_text="Website or social link (optional)", width=500
+        )
+        website.pack(pady=4)
+
         avatar = {"path": ""}
-        avatar_status = ctk.CTkLabel(form, text="No profile photo selected", text_color="#9aa0b5")
+        avatar_status = ctk.CTkLabel(
+            form, text="No profile photo selected", text_color="#9aa0b5"
+        )
         avatar_status.pack(anchor="w", padx=14, pady=(5, 0))
-        ctk.CTkButton(form, text="Choose profile photo", width=180, command=lambda: s.choose_avatar(avatar, avatar_status)).pack(anchor="w", padx=12, pady=(3, 6))
-        ctk.CTkButton(form, text="Create Profile", width=300, height=40,
-                      command=lambda: s.do_signup(u2.get(), p2.get(), z2.get(), full_name=full_name.get(), state=state_entry.get(),
-                                                  email=email.get(), bio=bio.get("1.0", "end-1c"), interests=interests.get(),
-                                                  website=website.get(), avatar_path=avatar["path"])).pack(pady=8)
-        s.err = ctk.CTkLabel(p, text="", text_color="#ff6b6b", font=("Segoe UI", 13)); s.err.pack()
-        ctk.CTkButton(p, text="Continue as guest", fg_color=CARD, hover_color=HOVER, command=s.guest).pack(pady=6)
-        s.sponsor_footer(p)
+        ctk.CTkButton(
+            form, text="Choose profile photo", width=180,
+            command=lambda: s.choose_avatar(avatar, avatar_status),
+        ).pack(anchor="w", padx=12, pady=(3, 6))
+        ctk.CTkButton(
+            form, text="Create Profile", width=300, height=40,
+            command=lambda: s.do_signup(
+                u2.get(), p2.get(), z2.get(),
+                full_name=full_name.get(),
+                state=state_entry.get(),
+                email=email.get(),
+                bio=bio.get("1.0", "end-1c"),
+                interests=interests.get(),
+                website=website.get(),
+                avatar_path=avatar["path"],
+            ),
+        ).pack(pady=8)
+
+        s.err = ctk.CTkLabel(
+            form, text="", text_color="#ff6b6b",
+            font=("Segoe UI", 13), wraplength=500,
+        )
+        s.err.pack(pady=(0, 6))
 
     def choose_avatar(s, avatar, status):
         selected = filedialog.askopenfilename(title="Choose a profile photo", filetypes=[("Images", "*.png *.jpg *.jpeg *.webp")])
@@ -247,11 +387,11 @@ class Gate(ctk.CTkFrame):
     def do_login(s, u, p, remember=True):
         identifier = u.strip()
         if not identifier or not p:
-            s.err.configure(text="Enter your username or email and password.")
+            s.login_err.configure(text="Enter your username or email and password.")
             return
 
         local_user = database.verify_user(identifier, p)
-        s.err.configure(text="Signing in…", text_color="#c9a45c")
+        s.login_err.configure(text="Signing in…", text_color="#c9a45c")
 
         def worker():
             client = None
@@ -311,13 +451,13 @@ class Gate(ctk.CTkFrame):
             return
 
         if getattr(error, "status_code", None) == 401:
-            message = "The server did not accept that username or email and password."
+            message = "Username/email or password is incorrect."
         elif error is not None:
             message = f"Could not sign in: {error}"
         else:
             message = "Sign-in failed. Please try again."
 
-        s.err.configure(text=message, text_color="#ff6b6b")
+        s.login_err.configure(text=message, text_color="#ff6b6b")
 
     def do_signup(s, u, p, z, *, full_name="", state="", email="", bio="", interests="", website="", avatar_path=""):
         u, z, state, email, full_name = u.strip(), z.strip(), state.strip().upper(), email.strip(), full_name.strip()
