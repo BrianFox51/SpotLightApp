@@ -706,14 +706,32 @@ class App(ctk.CTk):
         return (0, date, 1, -float(g(item, "score", 0) or 0))
     def favorite_button(self, parent, item):
         """Create the persistent per-user star used on catalog and search cards."""
+        user = getattr(getattr(self, "gate", None), "user", None) or {}
+        is_member = bool(user.get("username"))
         item_id = g(item, "id")
-        active = database.is_favorite(self.favorite_user_key(), item_id)
-        button = ctk.CTkButton(parent, text="★" if active else "☆", width=28, height=24,
-                               font=("Segoe UI Symbol", 19, "bold"), fg_color="transparent", hover_color=HOVER,
-                               text_color="#ffd84d" if active else "#a8aab2",
-                               command=lambda: self.toggle_favorite(item, button))
+        active = is_member and database.is_favorite(self.favorite_user_key(), item_id)
+
+        button = ctk.CTkButton(
+            parent,
+            text="★" if active else "☆",
+            width=28,
+            height=24,
+            font=("Segoe UI Symbol", 19, "bold"),
+            fg_color="transparent",
+            hover_color=HOVER,
+            text_color="#ffd84d" if active else ("#626675" if not is_member else "#a8aab2"),
+            command=lambda: self.toggle_favorite(item, button),
+        )
         return button
     def toggle_favorite(self, item, button):
+        user = getattr(getattr(self, "gate", None), "user", None) or {}
+        if not user.get("username"):
+            messagebox.showinfo(
+                "Spotlight",
+                "Please register to enable this feature",
+                parent=self.winfo_toplevel(),
+            )
+            return
         user_key, item_id = self.favorite_user_key(), g(item, "id")
         active = not database.is_favorite(user_key, item_id)
         database.set_favorite(user_key, item_id, active)
