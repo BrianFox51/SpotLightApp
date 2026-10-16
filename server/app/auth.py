@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from app.config import settings
@@ -79,7 +79,7 @@ def login(payload: LoginRequest, db: DBSession = Depends(get_db)):
         select(Account).where(
             or_(
                 Account.email == login_identifier,
-                Account.username == login_identifier,
+                func.lower(Account.username) == login_identifier,
             )
         )
     )
