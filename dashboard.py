@@ -9,6 +9,7 @@ import database
 import events
 import community
 import local_secrets
+from server_client import ServerAPIError, ServerClient
 
 BG, PANEL, CARD, HOVER, GOLD = "#0b0b11", "#12121a", "#1a1a26", "#28283e", "#c9a45c"
 SITE = "https://mythicmaskworks.com"
@@ -145,7 +146,7 @@ class Gate(ctk.CTkFrame):
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
         cfg = events.load_cfg()
-        u1 = ctk.CTkEntry(si, placeholder_text="Username", width=320); u1.pack(pady=(14, 6))
+        u1 = ctk.CTkEntry(si, placeholder_text="Username or email", width=320); u1.pack(pady=(14, 6))
         remembered_user = cfg.get("remembered_username", "")
         if remembered_user: u1.insert(0, remembered_user)
         p1 = ctk.CTkEntry(si, placeholder_text="Password", show="•", width=320); p1.pack(pady=6)
@@ -244,10 +245,79 @@ class Gate(ctk.CTkFrame):
         events.save_cfg(cfg)
 
     def do_login(s, u, p, remember=True):
-        user = database.verify_user(u, p) if u.strip() and p else None
-        if not user: return s.err.configure(text="Wrong username or password.")
-        s.remember_credentials(u, p, remember)
-        s.user = user; s.show_dashboard()
+        identifier = u.strip()
+        if not identifier or not p:
+            s.err.configure(text="Enter your username or email and password.")
+            return
+
+        local_user = database.verify_user(identifier, p)
+        s.err.configure(text="Signing in…", text_color="#c9a45c")
+
+        def worker():
+            client = None
+            tokens = None
+            profile = None
+            error = None
+
+            try:
+                client = ServerClient()
+                tokens = client.login(identifier, p)
+                profile = client.get_profile(tokens["access_token"])
+            except Exception as exc:
+                error = exc
+
+            s.app.uiq.put((
+                s.finish_login,
+                (identifier, p, remember, local_user, client, tokens, profile, error),
+            ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_login(s, identifier, password, remember, local_user, client, tokens, profile, error):
+        if profile and tokens:
+            server_profile = profile.get("profile") or {}
+            user = dict(local_user or {})
+            user.update(profile)
+            user["display_name"] = (
+                server_profile.get("full_name")
+                or user.get("full_name")
+                or profile.get("username", identifier)
+            )
+            user["city"] = user.get("city", "")
+            user["state"] = server_profile.get("state") or user.get("state", "")
+            user["zip"] = server_profile.get("zip") or user.get("zip", "")
+
+            s.server_client = client
+            s.server_access_token = tokens.get("access_token")
+            s.server_refresh_token = tokens.get("refresh_token")
+            s.user = user
+            s.remember_credentials(identifier, password, remember)
+            s.show_dashboard(status="Signed in to the SpotLight server.")
+            return
+
+        if local_user:
+            s.server_client = None
+            s.server_access_token = None
+            s.server_refresh_token = None
+            s.user = local_user
+            s.remember_credentials(identifier, password, remember)
+
+            if error is not None and getattr(error, "status_code", None) is not None:
+                status = "Signed in on this PC; the server did not accept this account."
+            else:
+                status = "Signed in on this PC; the server is unavailable, so online features are off."
+
+            s.show_dashboard(status=status)
+            return
+
+        if getattr(error, "status_code", None) == 401:
+            message = "The server did not accept that username or email and password."
+        elif error is not None:
+            message = f"Could not sign in: {error}"
+        else:
+            message = "Sign-in failed. Please try again."
+
+        s.err.configure(text=message, text_color="#ff6b6b")
 
     def do_signup(s, u, p, z, *, full_name="", state="", email="", bio="", interests="", website="", avatar_path=""):
         u, z, state, email, full_name = u.strip(), z.strip(), state.strip().upper(), email.strip(), full_name.strip()
