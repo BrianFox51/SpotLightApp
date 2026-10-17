@@ -1441,15 +1441,15 @@ class App(ctk.CTk):
             gate.say(message)
     def sync_events(self, say, scope="state", status_callback=None, on_complete=None):
         """Load Ticketmaster event listings for the user's state."""
-        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
+        done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
         u = self.gate.user or {}; key = events.load_cfg().get("ticketmaster_key", "")
         if not key:
             if status_callback: status_callback("ticketmaster_key", "not_set", "Ticketmaster: key not set.")
-            say("Ticketmaster key not set. Other configured sources will still refresh."); done(); return
+            say("Ticketmaster key not set. Other configured sources will still refresh."); done("skipped"); return
         statewide = scope == "state"
         if statewide and not u.get("state"):
             if status_callback: status_callback("ticketmaster_key", "not_checked", "Ticketmaster needs a ZIP code to search by state.")
-            say("Add a ZIP code to your account to search Ticketmaster events by state."); done(); return
+            say("Add a ZIP code to your account to search Ticketmaster events by state."); done("skipped"); return
         search_label = f"all of {u['state']}"
         say("Starting…")
         def work():
@@ -1457,13 +1457,13 @@ class App(ctk.CTk):
             except urllib.error.HTTPError as e:
                 msg = "Ticketmaster rejected the key. Check the saved credential." if e.code in (401, 403) else f"Ticketmaster request failed (HTTP {e.code})."
                 if status_callback: status_callback("ticketmaster_key", "bad", msg)
-                self.uiq.put((say, (msg,))); done(); return
+                self.uiq.put((say, (msg,))); done("failed"); return
             except Exception as e:
                 if status_callback: status_callback("ticketmaster_key", "bad", f"Ticketmaster unavailable: {e}")
-                self.uiq.put((say, (f"Ticketmaster sync failed: {e}",))); done(); return
+                self.uiq.put((say, (f"Ticketmaster sync failed: {e}",))); done("failed"); return
             if status_callback: status_callback("ticketmaster_key", "ok", "Ticketmaster connection working.")
             self.uiq.put((self.apply_sync, (res, search_label)))
-            done()
+            done("success")
         threading.Thread(target=work, daemon=True).start()
     def apply_sync(self, res, search_label="near you"):
         for (cat, title), kw in res["meta"].items(): self.meta.d.setdefault(f"{cat}|{title}", {}).update(kw)
@@ -1475,17 +1475,17 @@ class App(ctk.CTk):
 
     def sync_ohio_schedules(self, say, on_complete=None):
         """Refresh Ohio festival/fair schedule facts and event links in a worker thread."""
-        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
+        done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
         say("Updating Ohio festival and fair listings…")
         def work():
             try:
                 result = events.sync_ohio_schedules()
             except Exception as exc:
                 self.uiq.put((say, (f"Ohio Festivals refresh failed: {exc}",)))
-                done()
+                done("failed")
                 return
             self.uiq.put((self.apply_ohio_schedules, (result, say)))
-            done()
+            done("success")
         threading.Thread(target=work, daemon=True).start()
 
     def apply_ohio_schedules(self, result, say=None):
@@ -1503,16 +1503,16 @@ class App(ctk.CTk):
 
     def sync_tvmaze(self, say, on_complete=None):
         """Fetch this week's US broadcast schedule and add channel/airtime details to TV cards."""
-        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
+        done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
         say("Gathering US TV channel schedules and airtimes…")
         def work():
             try:
                 shows = online.tvmaze_schedule(days=7)
             except Exception as exc:
                 self.uiq.put((say, (f"TV guide refresh unavailable: {exc}",)))
-                done(); return
+                done("failed"); return
             self.uiq.put((self.apply_tvmaze, (shows, say)))
-            done()
+            done("success")
         threading.Thread(target=work, daemon=True).start()
 
     def apply_tvmaze(self, shows, say=None):
@@ -1552,10 +1552,10 @@ class App(ctk.CTk):
         if say: say(message)
     def sync_tmdb(self, say, token, status_callback=None, on_complete=None):
         """Refresh the movie and on-air TV catalogs from TMDB in the background."""
-        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
+        done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
         if not token:
             if status_callback: status_callback("tmdb_key", "not_set", "TMDB key not set.")
-            say("TMDB key not set. Other configured sources will still refresh."); done(); return
+            say("TMDB key not set. Other configured sources will still refresh."); done("skipped"); return
         say("Updating currently playing movies and on-air TV from TMDB…")
         def work():
             try:
@@ -1563,10 +1563,10 @@ class App(ctk.CTk):
             except urllib.error.HTTPError as exc:
                 message = "TMDB rejected the token. Check it in the TMDB key field and try again." if exc.code in (401, 403) else f"TMDB update failed (HTTP {exc.code})."
                 if status_callback: status_callback("tmdb_key", "bad", message)
-                self.uiq.put((say, (message,))); done(); return
+                self.uiq.put((say, (message,))); done("failed"); return
             except Exception as exc:
                 if status_callback: status_callback("tmdb_key", "bad", f"TMDB unavailable: {exc}")
-                self.uiq.put((say, (f"TMDB update failed: {exc}",))); done(); return
+                self.uiq.put((say, (f"TMDB update failed: {exc}",))); done("failed"); return
             for cat in ("movies", "tv"):
                 for result in catalogs.get(cat, []):
                     poster_path = os.path.join(POSTERS, slug(result["title"]) + ".jpg")
@@ -1575,15 +1575,15 @@ class App(ctk.CTk):
                         except Exception: pass
             if status_callback: status_callback("tmdb_key", "ok", "TMDB connection working.")
             self.uiq.put((self.apply_tmdb, (catalogs, say)))
-            done()
+            done("success")
         threading.Thread(target=work, daemon=True).start()
 
     def sync_watchmode(self, say, key, status_callback=None, on_complete=None):
         """Refresh bounded US movie and TV streaming catalogs with the local Watchmode key."""
-        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
+        done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
         if not key:
             if status_callback: status_callback("watchmode_key", "not_set", "Watchmode key not set.")
-            say("Watchmode key not set. Other configured sources will still refresh."); done(); return
+            say("Watchmode key not set. Other configured sources will still refresh."); done("skipped"); return
         say("Updating US streaming catalog from Watchmode…")
         def work():
             try:
@@ -1592,25 +1592,25 @@ class App(ctk.CTk):
             except urllib.error.HTTPError as exc:
                 message = "Watchmode rejected the key. Check the saved credential." if exc.code in (401, 403) else f"Watchmode update failed (HTTP {exc.code})."
                 if status_callback: status_callback("watchmode_key", "bad", message)
-                self.uiq.put((say, (message,))); done(); return
+                self.uiq.put((say, (message,))); done("failed"); return
             except Exception as exc:
                 if status_callback: status_callback("watchmode_key", "bad", f"Watchmode unavailable: {exc}")
-                self.uiq.put((say, (f"Watchmode update failed: {exc}",))); done(); return
+                self.uiq.put((say, (f"Watchmode update failed: {exc}",))); done("failed"); return
             if status_callback: status_callback("watchmode_key", "ok", "Watchmode connection working.")
             self.uiq.put((self.apply_watchmode, (catalogs, say)))
-            done()
+            done("success")
         threading.Thread(target=work, daemon=True).start()
 
     def sync_igdb(self, say, client_id, client_secret, status_callback=None, on_complete=None):
         """Validate IGDB credentials and refresh a bounded popular/upcoming game catalog."""
-        done = lambda: self.uiq.put((on_complete, ())) if on_complete else None
+        done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
         def report(state, message):
             if status_callback:
                 status_callback("igdb_client_id", state, message)
                 status_callback("igdb_client_secret", state, message)
         if not client_id or not client_secret:
             report("not_set", "IGDB needs both a Twitch Client ID and Client Secret; other sources will still refresh.")
-            say("IGDB needs both Twitch credentials. Other configured sources will still refresh."); done(); return
+            say("IGDB needs both Twitch credentials. Other configured sources will still refresh."); done("skipped"); return
         say("Updating popular and upcoming games from IGDB…")
         def work():
             try:
@@ -1619,7 +1619,7 @@ class App(ctk.CTk):
                 if not game_count:
                     message = "IGDB credentials work, but the game queries returned no titles. Check the IGDB app access and try Refresh again."
                     report("bad", message)
-                    self.uiq.put((say, (message,))); done(); return
+                    self.uiq.put((say, (message,))); done("failed"); return
                 # Download covers in the worker so the desktop UI stays responsive.
                 cover_jobs = {}; screenshot_jobs = {}
                 for result in (catalogs.get("popular", []) or []) + (catalogs.get("upcoming", []) or []):
@@ -1650,16 +1650,14 @@ class App(ctk.CTk):
             except urllib.error.HTTPError as exc:
                 message = "IGDB rejected the Twitch credentials. Check the Client ID and Client Secret." if exc.code in (400, 401, 403) else f"IGDB update failed (HTTP {exc.code})."
                 report("bad", message)
-                self.uiq.put((say, (message,))); done(); return
+                self.uiq.put((say, (message,))); done("failed"); return
             except Exception as exc:
                 report("bad", f"IGDB unavailable: {exc}")
-                self.uiq.put((say, (f"IGDB update failed: {exc}",))); done(); return
-            report("ok", "IGDB credentials working; catalog data loaded.")
-            self.uiq.put((self.apply_igdb_safely, (catalogs, say, report)))
-            done()
+                self.uiq.put((say, (f"IGDB update failed: {exc}",))); done("failed"); return
+            self.uiq.put((self.apply_igdb_safely, (catalogs, say, report, done)))
         threading.Thread(target=work, daemon=True).start()
 
-    def apply_igdb_safely(self, catalogs, say, report):
+    def apply_igdb_safely(self, catalogs, say, report, on_complete=None):
         """Keep a malformed IGDB result from stopping the UI queue silently."""
         try:
             self.apply_igdb(catalogs, say)
@@ -1667,6 +1665,10 @@ class App(ctk.CTk):
             message = f"IGDB returned data, but Spotlight could not save it: {exc}"
             report("bad", message)
             if say: say(message)
+            if on_complete: on_complete("failed")
+            return
+        report("ok", "IGDB credentials working; catalog data loaded.")
+        if on_complete: on_complete("success")
 
     def apply_igdb(self, catalogs, say=None):
         """Save IGDB popular/upcoming titles and expose their genre/platform metadata."""

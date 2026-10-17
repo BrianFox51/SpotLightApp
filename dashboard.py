@@ -75,12 +75,15 @@ class Gate(ctk.CTkFrame):
         super().__init__(app, fg_color=BG, corner_radius=0)
         s.app, s.user, s.imgs, s.banner, s.logo = app, None, [], find_banner(base), trim_logo(load_logo(base))
         s.refreshing, s.refresh_jobs_left = False, 0
+        s.auto_refresh_started = False
+        s.auto_refresh_after_id = None
+        s.refresh_outcomes = {"success": 0, "failed": 0, "skipped": 0}
         s.refresh_banner, s.refresh_controls = None, []
         s.tmdb_footer_logo = load_tmdb_logo(base, "tmdb_footer.png")
         s.place(x=0, y=0, relwidth=1, relheight=1); s.show_login()
 
     def set_refreshing(s, active, jobs=0):
-        """Show refresh progress and temporarily disable dashboard navigation/actions."""
+        """Show refresh progress while leaving cached catalog navigation available."""
         s.refreshing = bool(active)
         s.refresh_jobs_left = jobs if active else 0
         if s.refresh_banner is not None and s.refresh_banner.winfo_exists():
@@ -94,21 +97,33 @@ class Gate(ctk.CTkFrame):
             except Exception:
                 pass
 
-    def refresh_job_finished(s):
-        """Release dashboard controls only after each source refresh has returned."""
+    def refresh_job_finished(s, outcome="success"):
+        """Record each source result and summarize the completed refresh accurately."""
         if not s.refreshing:
             return
+        if outcome not in s.refresh_outcomes:
+            outcome = "failed"
+        s.refresh_outcomes[outcome] += 1
         s.refresh_jobs_left = max(0, s.refresh_jobs_left - 1)
         if s.refresh_jobs_left == 0:
-            refreshed_at = int(time.time())
-            cfg = events.load_cfg()
-            cfg["last_refresh_at"] = refreshed_at
-            events.save_cfg(cfg)
-            if getattr(s, "last_refresh_label", None) is not None and s.last_refresh_label.winfo_exists():
-                s.last_refresh_label.configure(text="Last refreshed: " + datetime.fromtimestamp(refreshed_at).strftime("%b %d, %Y at %I:%M %p"))
+            counts = s.refresh_outcomes
+            if counts["success"]:
+                refreshed_at = int(time.time())
+                cfg = events.load_cfg()
+                cfg["last_refresh_at"] = refreshed_at
+                events.save_cfg(cfg)
+                if getattr(s, "last_refresh_label", None) is not None and s.last_refresh_label.winfo_exists():
+                    s.last_refresh_label.configure(text="Last refreshed: " + datetime.fromtimestamp(refreshed_at).strftime("%b %d, %Y at %I:%M %p"))
             s.set_refreshing(False)
             s.update_dashboard_stats()
-            s.say("Refresh complete.")
+            if counts["failed"] and counts["success"]:
+                s.say(f"Refresh finished: {counts['success']} sources updated; {counts['failed']} failed and {counts['skipped']} skipped. Saved cards are still available.")
+            elif counts["failed"]:
+                s.say(f"Online refresh failed for {counts['failed']} sources; {counts['skipped']} skipped. Saved cards are still available offline.")
+            elif counts["success"]:
+                s.say(f"Refresh complete: {counts['success']} sources updated; {counts['skipped']} skipped.")
+            else:
+                s.say("No online sources are configured yet. Saved cards are available; add API keys or ZIP details, then refresh.")
 
     def clear(s):
         for w in s.winfo_children(): w.destroy()
@@ -545,7 +560,7 @@ class Gate(ctk.CTkFrame):
         ctk.CTkLabel(p, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
         where = ", ".join(x for x in (city, state) if x) or "No location set: create an account with a ZIP code to see what's near you"
         ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14)).pack(pady=(2, 22))
-        s.refresh_banner = ctk.CTkLabel(p, text="⏳  Refreshing Spotlight data… Please wait. Dashboard actions will be available when all updates finish.",
+        s.refresh_banner = ctk.CTkLabel(p, text="⏳  Updating Spotlight in the background. Your saved cards remain available while it works.",
                                         fg_color="#42351d", text_color="#f0cf78", corner_radius=10,
                                         font=("Segoe UI", 14, "bold"), padx=16, pady=11, wraplength=900)
         if s.refreshing: s.refresh_banner.pack(pady=(0, 12))
@@ -575,20 +590,21 @@ class Gate(ctk.CTkFrame):
         area_selector = ctk.CTkOptionMenu(area_row, values=area_choices, variable=area, width=210,
                                           state="normal" if state else "disabled")
         area_selector.pack(side="left")
-        def refresh_all():
+        def refresh_all(save_keys=True):
             if s.refreshing: return
-            save_api_keys()
-            s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal")]
-            s.refresh_controls.extend((button, "normal") for button in s.dashboard_action_buttons)
+            if save_keys:
+                save_api_keys()
+            s.refresh_outcomes = {"success": 0, "failed": 0, "skipped": 0}
+            s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal"), (signout_button, "normal")]
             s.set_refreshing(True, jobs=6)
             current = events.load_cfg()
             report = lambda key, state, message: s.app.uiq.put((s.update_api_status, (key, state, message)))
-            done = s.refresh_job_finished
+            done = lambda outcome="success": s.app.uiq.put((s.refresh_job_finished, (outcome,)))
             def start_refresh(job, *args):
                 try: job(*args, done)
                 except Exception as exc:
-                    s.say(f"A refresh job could not start: {exc}")
-                    done()
+                    s.say(f"A refresh source could not start: {exc}")
+                    done("failed")
             start_refresh(s.app.sync_tmdb, s.say, current.get("tmdb_key", ""), report)
             start_refresh(s.app.sync_events, s.say, "state", report)
             start_refresh(s.app.sync_ohio_schedules, s.say)
@@ -723,10 +739,16 @@ class Gate(ctk.CTkFrame):
         signout_button = ctk.CTkButton(dashboard_actions, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out)
         signout_button.pack(side="left", padx=8)
         s.dashboard_action_buttons = [enter_button, promote_button, community_button, signout_button]
-        s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal")]
-        s.refresh_controls.extend((button, "disabled" if button is community_button and not community_available else "normal") for button in s.dashboard_action_buttons)
+        s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal"), (signout_button, "normal")]
         if s.refreshing: s.set_refreshing(True, jobs=s.refresh_jobs_left)
         ctk.CTkLabel(p, text="Community and profile tools are paused until their service and windows are ready.", text_color="#85899a", font=("Segoe UI", 11)).pack(pady=(0, 8))
+        if not s.auto_refresh_started:
+            s.auto_refresh_started = True
+            def start_auto_refresh():
+                s.auto_refresh_after_id = None
+                if s.user is not None and s.winfo_exists():
+                    refresh_all(save_keys=False)
+            s.auto_refresh_after_id = s.after(300, start_auto_refresh)
 
     def update_dashboard_stats(s):
         """Refresh the visible count cards without clearing or rebuilding the dashboard."""
@@ -856,4 +878,9 @@ class Gate(ctk.CTkFrame):
         s.app.pick_genre("All")
 
     def sign_out(s):
+        if s.auto_refresh_after_id is not None:
+            try: s.after_cancel(s.auto_refresh_after_id)
+            except Exception: pass
+            s.auto_refresh_after_id = None
+        s.auto_refresh_started = False
         s.user = None; s.show_login()

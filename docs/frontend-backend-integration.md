@@ -39,13 +39,13 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 
 ### Refresh and catalog counts
 
-- The dashboard's combined Refresh button starts six provider/event sync jobs. Refresh is user-triggered; the dashboard does not automatically refresh when it opens.
+- The dashboard renders saved catalog data first, then starts the same six provider/event sync jobs once when a signed-in or guest dashboard session opens. The jobs run in the background; saved cards stay available while they run. The Refresh button remains available after the jobs finish for a manual update.
 - The current search-area selector offers only the account's own state (or a disabled prompt when no state is available). Choosing another state and then refreshing is not implemented.
 - `database.dashboard_stats` counts saved rows in `media_items` by category. Its headline `total` sums only the six categories displayed on the dashboard (`music`, `movies`, `tv`, `games`, `sports`, and `festivals`), so it equals the sum of those category tiles. These are saved catalog rows; event visibility rules can hide expired music, sports, or festival cards without deleting their cached rows.
 - The state tile counts distinct catalog media IDs linked to saved event records whose location text contains the account's state code. Its label is “Items with saved events in [state]”; it does not claim to count all titles available in that state.
 - `dashboard_stats` counts saved local event rows separately. It does not currently filter expired events from this saved-row count.
 - The Favorites count is scoped to the current local username. It is independent of catalog totals and event counts.
-- Refresh completion records a general `last_refresh_at` timestamp after the scheduled jobs finish. A timestamp alone does not establish that each provider succeeded; provider status is tracked separately.
+- Each refresh job reports success, failure, or skipped (for example, missing credentials or a ZIP code). The dashboard's final message summarizes those outcomes. `last_refresh_at` advances only when at least one source succeeds; provider credential status remains tracked separately.
 - TVmaze and Ohio schedule syncs prune stale provider-only records after non-empty results. Watchmode fetches only a bounded first page per media type, so absent results are not immediately pruned; its 30-day age-based cleanup removes old, un-favorited, Watchmode-only records. Review each source's success and expiry rules before adding automatic pruning.
 - Ticketmaster sync does not prune records just because they disappear from a refresh result. At app startup, dated Ticketmaster and Ohio event rows whose dates have passed are removed from the cache unless any local account favorited them; those favorites remain available. Event cards hidden by visibility checks are therefore cleaned from the cache on the next app launch.
 
