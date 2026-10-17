@@ -267,10 +267,13 @@ def dashboard_stats(city="", state="", username="__guest__"):
     """Counts for the dashboard, including this user's saved favorites."""
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     cats = dict(c.execute("SELECT category, COUNT(*) FROM media_items GROUP BY category").fetchall())
+    # Keep the headline total aligned with the six category counts shown below it.
+    displayed_categories = ("music", "movies", "tv", "games", "sports", "festivals")
+    total = sum(cats.get(category, 0) for category in displayed_categories)
     def near(term):
         if not term: return 0
         return c.execute("SELECT COUNT(DISTINCT media_id) FROM local_events WHERE location_details LIKE ?", (f"%{term}%",)).fetchone()[0]
-    out = {"cats": cats, "total": sum(cats.values()), "events": c.execute("SELECT COUNT(*) FROM local_events").fetchone()[0],
+    out = {"cats": cats, "total": total, "events": c.execute("SELECT COUNT(*) FROM local_events").fetchone()[0],
            "near_city": near(city), "near_state": near(f", {state}" if state else ""),
            "favorites": c.execute("SELECT COUNT(*) FROM favorites WHERE username = ?", (username or "__guest__",)).fetchone()[0]}
     conn.close(); return out

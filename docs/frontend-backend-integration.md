@@ -40,9 +40,9 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 
 - The dashboard's combined Refresh button starts six provider/event sync jobs. Refresh is user-triggered; the dashboard does not automatically refresh when it opens.
 - The current search-area selector offers only the account's own state (or a disabled prompt when no state is available). Choosing another state and then refreshing is not implemented.
-- `database.dashboard_stats` counts rows in `media_items` grouped by database category. Its `total` is the sum of all grouped categories, not a separately deduplicated count of currently visible cards.
-- The dashboard displays six category values and labels their sum “Titles found.” This needs an audit to confirm that all counted categories correspond one-to-one with visible cards and that hidden/expired records are handled consistently.
-- `dashboard_stats` counts local event rows separately. Its `near_state` value counts distinct media IDs in `local_events` whose location text contains the state code; the dashboard currently labels this value “Titles in [state].” That label and metric do not match and must be corrected or redefined.
+- `database.dashboard_stats` counts saved rows in `media_items` by category. Its headline `total` sums only the six categories displayed on the dashboard (`music`, `movies`, `tv`, `games`, `sports`, and `festivals`), so it equals the sum of those category tiles. These are saved catalog rows; event visibility rules can hide expired music, sports, or festival cards without deleting their cached rows.
+- The state tile counts distinct catalog media IDs linked to saved event records whose location text contains the account's state code. Its label is “Items with saved events in [state]”; it does not claim to count all titles available in that state.
+- `dashboard_stats` counts saved local event rows separately. It does not currently filter expired events from this saved-row count.
 - The Favorites count is scoped to the current local username. It is independent of catalog totals and event counts.
 - Refresh completion records a general `last_refresh_at` timestamp after the scheduled jobs finish. A timestamp alone does not establish that each provider succeeded; provider status is tracked separately.
 - Some provider syncs prune records that disappear from a successful result. Watchmode rows also have an age-based prune. Review each source's success and expiry rules before adding automatic pruning.

@@ -553,7 +553,7 @@ class Gate(ctk.CTkFrame):
         cards = [("Titles found", st["total"]), ("🎵 Music", c.get("music", 0)), ("🎬 Movies", c.get("movies", 0)), ("📺 TV", c.get("tv", 0)),
                  ("🎮 Games", c.get("games", 0)), ("🏆 Sports", c.get("sports", 0)), ("🎪 Festivals", c.get("festivals", 0)), ("📍 Local events saved", st["events"]),
                  ("⭐ Favorites", st["favorites"]),
-                 (f"Titles in {state}" if state else "Titles in your state", st["near_state"] if state else "-")]
+                 (f"Items with saved events in {state}" if state else "Items with saved events in your state", st["near_state"] if state else "-")]
         grid = ctk.CTkFrame(p, fg_color="transparent"); grid.pack()
         s.stats_value_labels = []
         for i, (label, val) in enumerate(cards):
