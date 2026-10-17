@@ -167,7 +167,7 @@ def sync_ohio_schedules(today=None):
                 "desc": "Listed by OhioFestivals.net. Confirm dates and details with the event organizer.",
                 "first_shown": "OhioFestivals.net schedule", "recent_shown": entry["date"], "srcs": ["OhioFestivals.net"]}
         database.save_media_item("festivals", item, [], [{"venue": entry["title"], "time": entry["date"],
-            "location": location, "purchase_url": entry["url"]}])
+            "location": location, "purchase_url": entry["url"], "area_scope": "state:OH"}])
         item_id = database.media_id("festivals", entry["title"], location); keep_ids.append(item_id)
         entry_meta = {"genre": entry["genre"], "event_website": entry["url"], "event_source_url": entry["source_url"],
                       "event_source_name": "Ohio Festivals · CC BY 4.0" if entry["page_type"] == "festivals" else "Ohio Festivals"}
@@ -223,6 +223,7 @@ def _parse(e):
             "price": f"from ${pr['min']:.0f}" if pr.get("min") and pr.get("currency") == "USD" else "",
             "segment": (c.get("segment") or {}).get("name") or "", "genre": (c.get("genre") or {}).get("name") or "", "sub": (c.get("subGenre") or {}).get("name") or "",
             "type": e.get("type", ""), "subtype": e.get("subType", ""),
+            "state_code": state,
             "attraction": at.get("name", ""), "desc": f"{v.get('name', '')}, {where}. " + (e.get("info") or e.get("pleaseNote") or "")[:400]}
 
 
@@ -253,13 +254,18 @@ def _events(key, lat=None, lng=None, radius=75, state_code=None, **params):
     return [_parse(event) for event in found]
 
 
-def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=None):
+def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=None, area_scope=None):
     """Save nearby or statewide events and matching tour dates to the catalog.
 
     Supply ``state_code`` for a state-wide U.S. search. Otherwise, event
     listings use ``radius`` miles around ``lat`` and ``lng``. The return value
     contains title metadata and counts for music, sports, and festivals.
     """
+    area_scope = area_scope or (
+        f"state:{state_code.upper()}" if state_code
+        else f"local:{float(lat):.2f},{float(lng):.2f}" if lat is not None and lng is not None
+        else ""
+    )
     meta, n = {}, {"music": 0, "sports": 0, "festivals": 0}
 
     def find_events(search_radius, **filters):
@@ -268,7 +274,10 @@ def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=No
     def keep(cat, ev, genre, **extra_meta):
         item = {"title": ev["name"], "sub": ev["venue"], "year": ev["date"][:4], "url": ev["url"], "score": float(max(1, 100 - max(ev["days"], 0))), "desc": ev["desc"],
                 "first_shown": "Live listing", "recent_shown": "Next: " + ev["label"], "srcs": ["Ticketmaster"]}
-        database.save_media_item(cat, item, [], [{"venue": ev["venue"], "time": ev["label"], "location": ev["where"], "purchase_url": ev["url"]}])
+        database.save_media_item(cat, item, [], [{
+            "venue": ev["venue"], "time": ev["label"], "location": ev["where"],
+            "purchase_url": ev["url"], "area_scope": area_scope,
+        }])
         meta[(cat, ev["name"])] = {"genre": genre, "online_v3": True, "buy_url": ev["url"], "buy_label": "Ticketmaster" + (f" · {ev['price']}" if ev["price"] else ""), **extra_meta}
         p = os.path.join(poster_dir, _slug(ev["name"]) + ".jpg")
         if ev["img"] and not os.path.exists(p) and not os.path.exists(p[:-4] + ".png"):

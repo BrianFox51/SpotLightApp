@@ -36,19 +36,20 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - `ServerClient` exposes list/add/remove favorites methods, but the desktop UI does not currently call them.
 - Provider refresh cleanup now deletes only rows owned solely by that provider and not favorited by any local account. An empty keep-list is treated as inconclusive and never clears a provider's catalog. Favorited rows are retained as cached catalog entries, including when Watchmode's age-based expiry runs. Old streaming-category rows migrate their favorite links to the replacement movie/TV item IDs before the old rows are deleted.
 - Generic `database.delete_item` still removes favorites for its media ID. Avoid using it for provider refresh cleanup; use the guarded prune helpers instead.
-- There is not yet a dedicated Favorites page. The dashboard Favorites count is informational; dashboard statistic cards are not yet interactive quick links.
+- The dashboard category count tiles open their matching Spotlight categories. The Favorites tile opens the dedicated per-user Favorites page; guests receive a registration prompt. The top Favorites shortcut is hidden on login and the Favorites view, and is shown in Spotlight after entering from the dashboard.
 
 ### Refresh and catalog counts
 
-- The dashboard renders saved catalog data first, then starts the same six provider/event sync jobs once when a signed-in or guest dashboard session opens. The jobs run in the background; saved cards stay available while they run. The Refresh button remains available after the jobs finish for a manual update.
-- The current search-area selector offers only the account's own state (or a disabled prompt when no state is available). Choosing another state and then refreshing is not implemented.
-- `database.dashboard_stats` counts saved rows in `media_items` by category. Its headline `total` sums only the six categories displayed on the dashboard (`music`, `movies`, `tv`, `games`, `sports`, and `festivals`), so it equals the sum of those category tiles. These are saved catalog rows; event visibility rules can hide expired music, sports, or festival cards without deleting their cached rows.
-- The state tile counts distinct catalog media IDs linked to saved event records whose location text contains the account's state code. Its label is “Items with saved events in [state]”; it does not claim to count all titles available in that state.
-- `dashboard_stats` counts saved local event rows separately. It does not currently filter expired events from this saved-row count.
-- The Favorites count is scoped to the current local username. It is independent of catalog totals and event counts.
-- Each refresh job reports success, failure, or skipped (for example, missing credentials or a ZIP code). The dashboard's final message summarizes those outcomes. `last_refresh_at` advances only when at least one source succeeds; provider credential status remains tracked separately.
-- TVmaze and Ohio schedule syncs prune stale provider-only records after non-empty results. Watchmode fetches only a bounded first page per media type, so absent results are not immediately pruned; its 30-day age-based cleanup removes old, un-favorited, Watchmode-only records. Review each source's success and expiry rules before adding automatic pruning.
-- Ticketmaster sync does not prune records just because they disappear from a refresh result. At app startup, dated Ticketmaster and Ohio event rows whose dates have passed are removed from the cache unless any local account favorited them; those favorites remain available. Event cards hidden by visibility checks are therefore cleaned from the cache on the next app launch.
+- Opening the dashboard after sign-in or guest entry renders saved counts, prunes expired dated event cards, then starts six background source jobs once for that session. Cached cards remain available during refresh. The jobs are data sources, not one job per category: TMDB, Ticketmaster events, Ohio schedules, Watchmode, IGDB, and TVmaze.
+- Registered accounts default to their profile state (or their locally saved search-state choice) and can select any U.S. state. Selecting an area changes the visible event filter; press Refresh to fetch the newly selected area's events. Guests see **Local**; selecting its control shows “Create a profile to enjoy these features.” The guest local radius is about 100 miles.
+- The first online guest refresh with no saved approximate location requests IP geolocation from GeoJS. Spotlight stores only rounded coordinates, city/region, and lookup time in its local configuration; it does not save the raw IP. The approximate location is reused for later refreshes and cached cards remain available offline. The UI discloses this use. IP geolocation is approximate and may reflect a VPN or network gateway rather than the user's physical location.
+- Ticketmaster event rows are tagged with their state or local search area. Switching areas filters new tagged event rows without deleting them. Legacy OhioFestivals.net rows are recognized as Ohio-only and hidden outside Ohio. The Ohio-specific fair calendar runs only for Ohio searches; other states currently use Ticketmaster event results, and additional vetted local fair sources remain a follow-up.
+- A refresh can report fewer than six successful updates because a source may be skipped when credentials or a state are unavailable. The summary distinguishes success, failure, and skipped jobs.
+- `database.dashboard_stats` provides the cached catalog and per-user favorite counts. The dashboard uses the same expiry and area-filtered event cards as Spotlight for its music, sports, and festivals tiles; movie, TV, and game tiles show the saved catalog counts. The headline total is recomputed from those six displayed tiles. Refresh results are merged by stable local media ID, so repeated results update existing rows instead of incrementing counts for duplicates.
+- Expired Ticketmaster and Ohio event cards are pruned on every dashboard entry, before dashboard counts are calculated. Favorited cards are retained. This date-based cleanup is separate from choosing a state or pressing Refresh. TVmaze and Ohio schedule refreshes also prune stale provider-only rows after non-empty results. Watchmode's bounded first page is inconclusive for missing rows; its 30-day age cleanup removes expired, un-favorited Watchmode-only rows at app startup.
+- Ticketmaster does not delete cards merely because they are absent from one refresh response. Date-based cleanup removes past events; provider refresh cleanup retains favorites and shared-source cards. A failed or empty fetch does not trigger a clear-all.
+- The admin-only **Clear card cache** action is available to a server-authenticated account whose server role is `admin`. It asks for confirmation, removes un-favorited catalog rows without personal notes and their linked event/credit rows, and resets the last-refresh marker. It keeps favorites, personal notes, accounts, API keys, source metadata, and image files. Afterward, Refresh repopulates immediately, or signing out and back in exercises the automatic dashboard refresh.
+- Favorites counts are scoped to the current local username. They are separate from catalog totals and event counts; server favorites are not synchronized with local favorites.
 
 ## Confirmed backend API contract
 
@@ -78,10 +79,10 @@ The profile response includes fields such as `full_name`, `state`, `zip`, `bio`,
 
 ## Next implementation priorities
 
-1. Audit dashboard counts against the actual saved and visible cards. In particular, confirm whether the state-specific tile counts titles or event-linked titles and align its query and label.
-2. Define provider refresh success and expiry rules, then verify that provider failures cannot prune valid cached items or favorites.
-3. Add automatic refresh on dashboard entry only after the count/cache audit. Preserve cached results when offline or a provider fails; require explicit refresh after changing the search area.
-4. Separately plan server registration, token refresh/revocation, and favorite synchronization. Do not imply those features are live until the desktop UI uses them.
+1. Verify dashboard category counts against visible cards after refresh, including provider merges, area filters, and expired-event pruning; the category tiles currently count the local catalog, while the saved-event tile is state-specific.
+2. Verify guest IP location success, denial, unavailable-network fallback, and offline cached-card display; verify that choosing a member state only takes effect after Refresh.
+3. Verify the admin cache-clear flow with a test account and confirm it preserves favorites and personal notes before using it on the main account.
+4. Separately plan token refresh/revocation and server favorite synchronization. Do not imply those features are live until the desktop UI uses them.
 
 ## Items still to verify
 

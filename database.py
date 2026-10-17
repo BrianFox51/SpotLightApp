@@ -54,9 +54,14 @@ def init_db():
             venue_name TEXT,
             event_time TEXT,
             location_details TEXT,
-            purchase_url TEXT
+            purchase_url TEXT,
+            area_scope TEXT NOT NULL DEFAULT ''
         )
     """)
+
+    event_columns = {row[1] for row in cursor.execute("PRAGMA table_info(local_events)").fetchall()}
+    if "area_scope" not in event_columns:
+        cursor.execute("ALTER TABLE local_events ADD COLUMN area_scope TEXT NOT NULL DEFAULT ''")
     
     # 4. Users (sign-up / sign-in; passwords are salted + hashed, never stored as text)
     cursor.execute("""
@@ -126,11 +131,16 @@ def save_media_item(cat, item, cast_list=None, event_list=None):
     # Check if there are local tour dates or movie theater showtimes to save
     if event_list:
         for ev in event_list:
-            e_id = hashlib.sha1(f"{media_id}_{ev['venue']}_{ev['time']}".encode()).hexdigest()
+            area_scope = str(ev.get("area_scope") or "")
+            e_id = hashlib.sha1(
+                f"{media_id}_{ev['venue']}_{ev['time']}_{ev['location']}_{area_scope}".encode()
+            ).hexdigest()
             cursor.execute("""
-                INSERT INTO local_events (event_id, media_id, venue_name, event_time, location_details, purchase_url)
-                VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING
-            """, (e_id, media_id, ev['venue'], ev['time'], ev['location'], ev.get('purchase_url', '')))
+                INSERT INTO local_events
+                    (event_id, media_id, venue_name, event_time, location_details, purchase_url, area_scope)
+                VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING
+            """, (e_id, media_id, ev['venue'], ev['time'], ev['location'],
+                  ev.get('purchase_url', ''), area_scope))
             
     conn.commit()
     conn.close()
@@ -156,6 +166,27 @@ def save_media_items(rows):
     finally:
         conn.close()
 
+def clear_unfavorited_catalog_cache():
+    """Clear cached catalog rows with no favorites or personal notes, preserving user data."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute("SELECT id, user_notes FROM media_items").fetchall()
+        favorite_ids = {row[0] for row in conn.execute("SELECT DISTINCT media_id FROM favorites")}
+        removable = [media_id for media_id, notes in rows
+                     if media_id not in favorite_ids and not str(notes or "").strip()]
+        keep_count = len(rows) - len(removable)
+        events_removed = credits_removed = 0
+        for offset in range(0, len(removable), 500):
+            batch = removable[offset:offset + 500]
+            marks = ",".join("?" for _ in batch)
+            events_removed += conn.execute(f"DELETE FROM local_events WHERE media_id IN ({marks})", batch).rowcount
+            credits_removed += conn.execute(f"DELETE FROM cast_crew_directory WHERE media_id IN ({marks})", batch).rowcount
+            conn.execute(f"DELETE FROM media_items WHERE id IN ({marks})", batch)
+        conn.commit()
+        return {"cards": len(removable), "events": events_removed, "credits": credits_removed, "kept": keep_count}
+    finally:
+        conn.close()
+
 def load_local_catalog(cat):
     """Retrieves cached media structures directly out of offline system storage."""
     conn = sqlite3.connect(DB_PATH)
@@ -167,7 +198,7 @@ def load_local_catalog(cat):
     return items
 
 def load_details(media_id):
-    """Extracts biographical data lists and synchronized local timeline maps."""
+    """Extract biography and event rows, including each event's cached search area."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()

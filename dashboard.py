@@ -2,7 +2,7 @@
 Branding images are loaded from the project media/ folder, with root/assets fallbacks."""
 import os, glob, json, re, shutil, threading, urllib.request, webbrowser, time
 from datetime import datetime
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image, ImageOps
 import database
@@ -27,6 +27,14 @@ API_FIELDS = (
     ("youtube_api_key", "YouTube Data API (optional)", "API key · not currently used by Spotlight", "https://console.cloud.google.com/", "planned"),
 )
 
+
+US_STATE_CODES = (
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL",
+    "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS",
+    "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH",
+    "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA",
+    "WA", "WV", "WI", "WY",
+)
 
 def load_logo(base):
     """The official SpotLight logo (LightWave_logo.png) as RGBA, or None. Looked for next to main.py, in media/ or assets/."""
@@ -546,7 +554,23 @@ class Gate(ctk.CTkFrame):
     def show_dashboard(s, status=""):
         s.clear(); p=s.page
         u = s.user or {"display_name": "Guest", "city": "", "state": ""}; city, state = u.get("city") or "", u.get("state") or ""
-        st = database.dashboard_stats(city, state, u.get("username") or "__guest__"); c = st["cats"]
+        s.app._prune_expired_event_cache()
+        cfg = events.load_cfg()
+        preferences = cfg.get("search_state_preferences", {})
+        account_key = u.get("username") or "__guest__"
+        selected_state = (preferences.get(account_key) or state or "").upper() if u.get("username") else ""
+        s.app.search_area_state = selected_state or None
+        if selected_state:
+            s.app.search_area_scope = f"state:{selected_state}"
+        elif cfg.get("guest_ip_location", {}).get("latitude") is not None and cfg.get("guest_ip_location", {}).get("longitude") is not None:
+            guest_location = cfg["guest_ip_location"]
+            s.app.search_area_scope = f"local:{float(guest_location['latitude']):.2f},{float(guest_location['longitude']):.2f}"
+        else:
+            s.app.search_area_scope = "local:unknown"
+        st = database.dashboard_stats(city, selected_state or state, account_key); c = st["cats"]
+        for category in ("music", "sports", "festivals"):
+            c[category] = len(s.app.load_catalog_items(category))
+        st["total"] = sum(c.get(category, 0) for category in ("music", "movies", "tv", "games", "sports", "festivals"))
         s.logo_label(190)
         if s.user and s.user.get("username"):
             avatar_path = s.user.get("avatar_path") or ""
@@ -561,8 +585,15 @@ class Gate(ctk.CTkFrame):
                                            corner_radius=32, fg_color=CARD, hover_color=HOVER, state="disabled")
             avatar_button.place(relx=0.97, y=10, anchor="ne")
         ctk.CTkLabel(p, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
-        where = ", ".join(x for x in (city, state) if x) or "No location set: create an account with a ZIP code to see what's near you"
-        ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14)).pack(pady=(2, 22))
+        where = ", ".join(x for x in (city, state) if x)
+        if not u.get("username"):
+            loc = cfg.get("guest_ip_location", {})
+            approx = ", ".join(x for x in (loc.get("city"), loc.get("region")) if x)
+            where = f"Local · approximate area near {approx}" if approx else "Local · approximate area"
+        elif not where:
+            where = "Add your location in your profile to see what's near you"
+        s.location_label = ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14))
+        s.location_label.pack(pady=(2, 22))
         s.refresh_banner = ctk.CTkLabel(p, text="⏳  Updating Spotlight in the background. Your saved cards remain available while it works.",
                                         fg_color="#42351d", text_color="#f0cf78", corner_radius=10,
                                         font=("Segoe UI", 14, "bold"), padx=16, pady=11, wraplength=900)
@@ -571,20 +602,23 @@ class Gate(ctk.CTkFrame):
         cards = [("Titles found", st["total"]), ("🎵 Music", c.get("music", 0)), ("🎬 Movies", c.get("movies", 0)), ("📺 TV", c.get("tv", 0)),
                  ("🎮 Games", c.get("games", 0)), ("🏆 Sports", c.get("sports", 0)), ("🎪 Festivals", c.get("festivals", 0)), ("📍 Local events saved", st["events"]),
                  ("⭐ Favorites", st["favorites"]),
-                 (f"Items with saved events in {state}" if state else "Saved event titles", st["near_state"] if state else "")]
+                 (f"Items with saved events in {selected_state}" if selected_state else "Saved event titles", st["near_state"] if selected_state else "")]
         grid = ctk.CTkFrame(p, fg_color="transparent"); grid.pack()
         s.stats_value_labels = []
+        s.stats_caption_labels = []
         for i, (label, val) in enumerate(cards):
             f = ctk.CTkFrame(grid, width=200, height=110, fg_color=CARD, corner_radius=16); f.grid(row=i // 5, column=i % 5, padx=8, pady=8); f.pack_propagate(False)
             value_label = ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD); value_label.pack(pady=(16, 0))
             s.stats_value_labels.append(value_label)
-            ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5").pack()
+            caption = ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5")
+            caption.pack()
+            s.stats_caption_labels.append(caption)
             quick_category = {1: "music", 2: "movies", 3: "tv", 4: "games", 5: "sports", 6: "festivals"}.get(i)
             if quick_category:
                 s.bind_stat_card(f, lambda category=quick_category: s.open_dashboard_category(category))
             elif i == 8:
                 s.bind_stat_card(f, s.open_dashboard_favorites)
-        cfg = events.load_cfg(); live = ctk.CTkFrame(p, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
+        live = ctk.CTkFrame(p, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
         def saved_api_value(name, source):
             if name == "igdb_client_secret":
                 return local_secrets.unprotect_text(source.get("igdb_client_secret_dpapi", "")) or source.get(name, "")
@@ -592,18 +626,43 @@ class Gate(ctk.CTkFrame):
         ctk.CTkLabel(live, text="🌐  Spotlight data sources", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
         area_row = ctk.CTkFrame(live, fg_color="transparent"); area_row.pack(anchor="w", padx=14, pady=(6, 2))
         ctk.CTkLabel(area_row, text="Search area", text_color="#9aa0b5").pack(side="left", padx=(0, 8))
-        state_choice = f"All of {state}" if state else "Statewide (add a ZIP code to your account)"
-        area_choices = [state_choice]
-        area = ctk.StringVar(value=area_choices[0])
-        area_selector = ctk.CTkOptionMenu(area_row, values=area_choices, variable=area, width=210,
-                                          state="normal" if state else "disabled")
+        state_choice = f"{selected_state} (Select a different state)" if selected_state else "Local"
+        area_choices = [f"{code} (Select a different state)" for code in US_STATE_CODES]
+        area = ctk.StringVar(value=state_choice)
+        is_member = bool(u.get("username"))
+        area_selector = ctk.CTkOptionMenu(area_row, values=area_choices, variable=area, width=245)
+        def set_area(choice):
+            nonlocal selected_state
+            if not is_member:
+                area.set("Local")
+                messagebox.showinfo("Spotlight", "Create a profile to enjoy these features.", parent=s.winfo_toplevel())
+                return
+            selected_state = choice[:2].upper()
+            area.set(f"{selected_state} (Select a different state)")
+            cfg_now = events.load_cfg()
+            cfg_now.setdefault("search_state_preferences", {})[account_key] = selected_state
+            events.save_cfg(cfg_now)
+            s.app.search_area_state = selected_state
+            s.app.search_area_scope = f"state:{selected_state}"
+            s.update_dashboard_stats()
+            s.say(f"Search area set to {selected_state}. Press Refresh to load events there; cached cards remain saved.")
+        area_selector.configure(command=set_area)
         area_selector.pack(side="left")
+        if not is_member:
+            ctk.CTkLabel(live, text="Local uses an approximate IP location; the approximate area is cached on this PC.",
+                         text_color="#85899a", font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(0, 4))
+        s.app.search_area_state = selected_state or None
+        s.app.search_area_scope = f"state:{selected_state}" if selected_state else "local:unknown"
+        clear_cache_button = None
         def refresh_all(save_keys=True):
             if s.refreshing: return
             if save_keys:
                 save_api_keys()
             s.refresh_outcomes = {"success": 0, "failed": 0, "skipped": 0}
-            s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal"), (signout_button, "normal")]
+            selected_state = s.app.search_area_state
+            s.refresh_controls = [(area_selector, "normal"), (refresh_button, "normal"), (signout_button, "normal")]
+            if clear_cache_button is not None:
+                s.refresh_controls.append((clear_cache_button, "normal"))
             s.set_refreshing(True, jobs=6)
             current = events.load_cfg()
             report = lambda key, state, message: s.app.uiq.put((s.update_api_status, (key, state, message)))
@@ -614,14 +673,21 @@ class Gate(ctk.CTkFrame):
                     s.say(f"A refresh source could not start: {exc}")
                     done("failed")
             start_refresh(s.app.sync_tmdb, s.say, current.get("tmdb_key", ""), report)
-            start_refresh(s.app.sync_events, s.say, "state", report)
-            start_refresh(s.app.sync_ohio_schedules, s.say)
+            start_refresh(s.app.sync_events, s.say, selected_state, report)
+            start_refresh(s.app.sync_ohio_schedules, s.say, selected_state or "")
             start_refresh(s.app.sync_watchmode, s.say, current.get("watchmode_key", ""), report)
             start_refresh(s.app.sync_igdb, s.say, current.get("igdb_client_id", ""), saved_api_value("igdb_client_secret", current), report)
             start_refresh(s.app.sync_tvmaze, s.say)
 
         refresh_button = ctk.CTkButton(area_row, text="🔄  Refresh", width=125, command=refresh_all)
         refresh_button.pack(side="left", padx=(10, 0))
+        if str((s.user or {}).get("role", "")).strip().lower() == "admin" and getattr(s, "server_access_token", None):
+            clear_cache_button = ctk.CTkButton(
+                area_row, text="Clear card cache", width=132,
+                fg_color="#6b2b35", hover_color="#8a3946",
+                command=lambda: s.clear_catalog_cache(),
+            )
+            clear_cache_button.pack(side="left", padx=(8, 0))
 
         manager_head = ctk.CTkFrame(live, fg_color="transparent"); manager_head.pack(fill="x", padx=14, pady=(6, 2))
         manager = ctk.CTkScrollableFrame(live, fg_color=PANEL, corner_radius=10, width=560, height=255)
@@ -747,7 +813,9 @@ class Gate(ctk.CTkFrame):
         signout_button = ctk.CTkButton(dashboard_actions, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out)
         signout_button.pack(side="left", padx=8)
         s.dashboard_action_buttons = [enter_button, promote_button, community_button, signout_button]
-        s.refresh_controls = [(area_selector, "normal" if state else "disabled"), (refresh_button, "normal"), (signout_button, "normal")]
+        s.refresh_controls = [(area_selector, "normal"), (refresh_button, "normal"), (signout_button, "normal")]
+        if clear_cache_button is not None:
+            s.refresh_controls.append((clear_cache_button, "normal"))
         if s.refreshing: s.set_refreshing(True, jobs=s.refresh_jobs_left)
         ctk.CTkLabel(p, text="Community and profile tools are paused until their service and windows are ready.", text_color="#85899a", font=("Segoe UI", 11)).pack(pady=(0, 8))
         if not s.auto_refresh_started:
@@ -758,18 +826,82 @@ class Gate(ctk.CTkFrame):
                     refresh_all(save_keys=False)
             s.auto_refresh_after_id = s.after(300, start_auto_refresh)
 
+    def refresh_guest_location(s, location):
+        """Update the guest's approximate location label after background IP lookup."""
+        if not s.user or s.user.get("username"):
+            return
+        cfg = events.load_cfg()
+        cfg["guest_ip_location"] = location
+        events.save_cfg(cfg)
+        approx = ", ".join(x for x in (location.get("city"), location.get("region")) if x)
+        try:
+            s.app.search_area_scope = f"local:{float(location['latitude']):.2f},{float(location['longitude']):.2f}"
+        except (KeyError, TypeError, ValueError):
+            pass
+        text = f"📍  Local · approximate area near {approx}" if approx else "📍  Local · approximate area"
+        try:
+            if getattr(s, "location_label", None) and s.location_label.winfo_exists():
+                s.location_label.configure(text=text)
+        except Exception:
+            pass
+        try:
+            if not s.winfo_ismapped() and getattr(s.app, "cat", None):
+                s.app.items = s.app.load_catalog_items(s.app.cat)
+                if s.app.genre is None:
+                    s.app.show_genres()
+        except Exception:
+            pass
+
     def update_dashboard_stats(s):
         """Refresh the visible count cards without clearing or rebuilding the dashboard."""
         if not getattr(s, "stats_value_labels", None): return
         u = s.user or {"city": "", "state": ""}
         city, state = u.get("city") or "", u.get("state") or ""
-        st = database.dashboard_stats(city, state, u.get("username") or "__guest__")
+        selected_state = getattr(s.app, "search_area_state", None) or state
+        st = database.dashboard_stats(city, selected_state, u.get("username") or "__guest__")
         cats = st["cats"]
+        for category in ("music", "sports", "festivals"):
+            cats[category] = len(s.app.load_catalog_items(category))
+        st["total"] = sum(cats.get(category, 0) for category in ("music", "movies", "tv", "games", "sports", "festivals"))
         values = [st["total"], cats.get("music", 0), cats.get("movies", 0), cats.get("tv", 0), cats.get("games", 0),
-                  cats.get("sports", 0), cats.get("festivals", 0), st["events"], st["favorites"], st["near_state"] if state else ""]
+                  cats.get("sports", 0), cats.get("festivals", 0), st["events"], st["favorites"], st["near_state"] if selected_state else ""]
+        captions = ["Titles found", "🎵 Music", "🎬 Movies", "📺 TV", "🎮 Games", "🏆 Sports", "🎪 Festivals", "📍 Local events saved", "⭐ Favorites",
+                    f"Items with saved events in {selected_state}" if selected_state else "Saved event titles"]
         for label, value in zip(s.stats_value_labels, values):
             try: label.configure(text=str(value))
             except Exception: pass
+        for label, caption in zip(getattr(s, "stats_caption_labels", []), captions):
+            try: label.configure(text=caption)
+            except Exception: pass
+
+    def clear_catalog_cache(s):
+        """Allow a server-authenticated administrator to clear safe local card cache rows."""
+        user = s.user or {}
+        if str(user.get("role", "")).strip().lower() != "admin" or not getattr(s, "server_access_token", None):
+            s.say("Only a signed-in server administrator can clear the card cache.")
+            return
+        if s.refreshing:
+            s.say("Wait for the current refresh to finish before clearing the card cache.")
+            return
+        confirmed = messagebox.askyesno(
+            "Clear cached cards",
+            "This removes cached catalog cards and their linked event and credit rows from this PC. "
+            "Cards with a favorite or personal note are kept. User accounts, favorites, API keys, "
+            "metadata, and image files are not changed. Continue?",
+            parent=s.app,
+        )
+        if not confirmed:
+            return
+        removed = database.clear_unfavorited_catalog_cache()
+        cfg = events.load_cfg()
+        cfg["last_refresh_at"] = 0
+        events.save_cfg(cfg)
+        s.update_dashboard_stats()
+        s.say(
+            f"Cleared {removed['cards']} cached cards and {removed['events']} event rows; "
+            f"kept {removed['kept']} cards with favorites or notes. Press Refresh or sign out and "
+            f"back in to repopulate from available sources."
+        )
 
     def bind_stat_card(s, card, action):
         """Make a dashboard stat tile a clear, hoverable shortcut."""

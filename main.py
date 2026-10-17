@@ -430,7 +430,7 @@ class App(ctk.CTk):
 
     # ---------- data ----------
     def _prune_expired_event_cache(self):
-        """Remove past event-feed rows at startup, leaving favorited items available."""
+        """Remove past event-feed rows at startup and dashboard entry, leaving favorited items available."""
         today = datetime.date.today()
         expired_ids = []
         for category in UNIT:
@@ -710,8 +710,35 @@ class App(ctk.CTk):
         end_date = event_end_date(item)
         return end_date is None or end_date >= datetime.date.today() or database.is_favorite(self.favorite_user_key(), g(item, "id"))
     def load_catalog_items(self, category):
-        """Load a category while keeping expired, non-favorited events out of view."""
-        return [item for item in database.load_local_catalog(category) if self.event_is_visible(item, category)]
+        """Load visible cached cards, filtering event cards to the selected search area."""
+        items = [item for item in database.load_local_catalog(category) if self.event_is_visible(item, category)]
+        if category not in {"music", "sports", "festivals"}:
+            return items
+        scope = getattr(self, "search_area_scope", "")
+        if not scope or scope == "local:unknown":
+            return items
+        visible = []
+        for item in items:
+            _cast, rows = database.load_details(item.get("id"))
+            scopes = {str(row.get("area_scope") or "") for row in rows}
+            scopes.discard("")
+            if not rows or not scopes:
+                try:
+                    sources = json.loads(item.get("sources") or "[]")
+                except (TypeError, ValueError):
+                    sources = []
+                # Older Ohio calendar rows predate area tags; never show them as another state's events.
+                if "OhioFestivals.net" in sources and scope != "state:OH":
+                    continue
+                legacy_states = {str(row.get("location_details") or "").rsplit(",", 1)[-1].strip().upper()
+                                 for row in rows if row.get("location_details")}
+                legacy_states.discard("")
+                if scope.startswith("state:") and legacy_states and scope.split(":", 1)[1] not in legacy_states:
+                    continue
+                visible.append(item)  # Keep other older untagged cards available offline.
+            elif scope in scopes:
+                visible.append(item)
+        return visible
     def event_order(self, item):
         """Order live events by date, then verified user submissions by submission time."""
         date = event_end_date(item)
@@ -1513,28 +1540,59 @@ class App(ctk.CTk):
         if gate is not None and gate.winfo_ismapped():
             gate.update_dashboard_stats()
             gate.say(message)
-    def sync_events(self, say, scope="state", status_callback=None, on_complete=None):
+    def sync_events(self, say, state_code=None, status_callback=None, on_complete=None):
         """Load Ticketmaster event listings for the user's state."""
         done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
         u = self.gate.user or {}; key = events.load_cfg().get("ticketmaster_key", "")
         if not key:
             if status_callback: status_callback("ticketmaster_key", "not_set", "Ticketmaster: key not set.")
             say("Ticketmaster key not set. Other configured sources will still refresh."); done("skipped"); return
-        statewide = scope == "state"
-        if statewide and not u.get("state"):
-            if status_callback: status_callback("ticketmaster_key", "not_checked", "Ticketmaster needs a ZIP code to search by state.")
-            say("Add a ZIP code to your account to search Ticketmaster events by state."); done("skipped"); return
-        search_label = f"all of {u['state']}"
+        state_code = (state_code or "").strip().upper()
+        guest = not bool(u.get("username"))
+        if not state_code and not guest:
+            if status_callback: status_callback("ticketmaster_key", "not_checked", "Add a location in your profile to search events.")
+            say("Add a location in your profile to search events."); done("skipped"); return
+        search_label = f"all of {state_code}" if state_code else "within about 100 miles of your approximate location"
         say("Starting…")
         def work():
-            try: res = events.sync(key, u.get("lat"), u.get("lng"), POSTERS, lambda s: self.uiq.put((say, (s,))), state_code=u.get("state") if statewide else None)
+            try:
+                latitude, longitude = u.get("lat"), u.get("lng")
+                location_resolved = latitude is not None and longitude is not None
+                area_scope = f"state:{state_code}" if state_code else ""
+                if guest:
+                    cfg = events.load_cfg()
+                    loc = cfg.get("guest_ip_location", {})
+                    if latitude is None or longitude is None:
+                        latitude, longitude = loc.get("latitude"), loc.get("longitude")
+                    location_resolved = latitude is not None and longitude is not None
+                    if latitude is None or longitude is None:
+                        try:
+                            request = urllib.request.Request("https://get.geojs.io/v1/ip/geo.json", headers={"User-Agent": "SpotLight/0.2"})
+                            with urllib.request.urlopen(request, timeout=5) as response:
+                                geo = json.loads(response.read().decode("utf-8"))
+                            latitude, longitude = float(geo["latitude"]), float(geo["longitude"])
+                        except Exception as exc:
+                            raise RuntimeError("Could not estimate a local area from the internet connection.") from exc
+                        location_resolved = True
+                        loc = {"latitude": round(latitude, 2), "longitude": round(longitude, 2),
+                               "city": str(geo.get("city") or "")[:80], "region": str(geo.get("region") or geo.get("region_code") or "")[:80],
+                               "updated_at": int(time.time())}
+                        self.uiq.put((self.gate.refresh_guest_location, (loc,)))
+                    area_scope = f"local:{float(latitude):.2f},{float(longitude):.2f}"
+                res = events.sync(key, latitude, longitude, POSTERS,
+                                  lambda message: self.uiq.put((say, (message,))), radius=100,
+                                  state_code=state_code or None, area_scope=area_scope)
             except urllib.error.HTTPError as e:
                 msg = "Ticketmaster rejected the key. Check the saved credential." if e.code in (401, 403) else f"Ticketmaster request failed (HTTP {e.code})."
                 if status_callback: status_callback("ticketmaster_key", "bad", msg)
                 self.uiq.put((say, (msg,))); done("failed"); return
             except Exception as e:
-                if status_callback: status_callback("ticketmaster_key", "bad", f"Ticketmaster unavailable: {e}")
-                self.uiq.put((say, (f"Ticketmaster sync failed: {e}",))); done("failed"); return
+                if guest and not location_resolved:
+                    msg = "Could not estimate a local area. Saved cards remain available; check your connection and refresh again."
+                else:
+                    msg = f"Ticketmaster unavailable: {e}"
+                if status_callback: status_callback("ticketmaster_key", "bad", msg)
+                self.uiq.put((say, (msg,))); done("failed"); return
             if status_callback: status_callback("ticketmaster_key", "ok", "Ticketmaster connection working.")
             self.uiq.put((self.apply_sync, (res, search_label)))
             done("success")
@@ -1547,9 +1605,13 @@ class App(ctk.CTk):
             self.items = self.load_catalog_items("music")
         self.publish_dashboard_update(f"Done: {res['music']} concerts/music events, {res['sports']} sports, and {res['festivals']} festivals and fairs found {search_label}.")
 
-    def sync_ohio_schedules(self, say, on_complete=None):
-        """Refresh Ohio festival/fair schedule facts and event links in a worker thread."""
+    def sync_ohio_schedules(self, say, state_code="", on_complete=None):
+        """Refresh Ohio festival/fair facts only when Ohio is the selected search area."""
         done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
+        if str(state_code).upper() != "OH":
+            say("Ohio-only festival listings skipped for this search area; other state events come from Ticketmaster.")
+            done("skipped")
+            return
         say("Updating Ohio festival and fair listings…")
         def work():
             try:
