@@ -33,7 +33,8 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - `database.py` stores local favorites by `(username, media_id)` in SQLite.
 - Local `media_id` is a SHA-1 hash of category, title, and subtitle. It is not the server's favorite ID or provider ID.
 - `ServerClient` exposes list/add/remove favorites methods, but the desktop UI does not currently call them.
-- Deleting a catalog row through the existing prune/delete helpers also deletes associated local favorites. Any automatic cache cleanup must account for this so a stale provider result does not silently erase a user's saved favorite.
+- Provider refresh cleanup now deletes only rows owned solely by that provider and not favorited by any local account. An empty keep-list is treated as inconclusive and never clears a provider's catalog. Favorited rows are retained as cached catalog entries, including when Watchmode's age-based expiry runs. Old streaming-category rows migrate their favorite links to the replacement movie/TV item IDs before the old rows are deleted.
+- Generic `database.delete_item` still removes favorites for its media ID. Avoid using it for provider refresh cleanup; use the guarded prune helpers instead.
 - There is not yet a dedicated Favorites page. The dashboard Favorites count is informational; dashboard statistic cards are not yet interactive quick links.
 
 ### Refresh and catalog counts
@@ -45,8 +46,8 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - `dashboard_stats` counts saved local event rows separately. It does not currently filter expired events from this saved-row count.
 - The Favorites count is scoped to the current local username. It is independent of catalog totals and event counts.
 - Refresh completion records a general `last_refresh_at` timestamp after the scheduled jobs finish. A timestamp alone does not establish that each provider succeeded; provider status is tracked separately.
-- Some provider syncs prune records that disappear from a successful result. Watchmode rows also have an age-based prune. Review each source's success and expiry rules before adding automatic pruning.
-- Past event cards are hidden by visibility checks, while that behavior is separate from deleting their database rows.
+- TVmaze and Ohio schedule syncs prune stale provider-only records after non-empty results. Watchmode fetches only a bounded first page per media type, so absent results are not immediately pruned; its 30-day age-based cleanup removes old, un-favorited, Watchmode-only records. Review each source's success and expiry rules before adding automatic pruning.
+- Ticketmaster sync does not prune event records that disappear or pass their dates. Past event cards are hidden by visibility checks, while that behavior is separate from deleting their database rows.
 
 ## Confirmed backend API contract
 
@@ -69,7 +70,7 @@ The profile response includes fields such as `full_name`, `state`, `zip`, `bio`,
 - Do not automatically upload, delete, or merge existing local favorites.
 - A local `media_id` is not interchangeable with a server `favorite_id` or provider `provider_id`.
 - Before syncing favorites, identify and persist a stable provider ID for each catalog item, including how to handle items represented by multiple providers.
-- Do not delete a user's favorite just because a provider temporarily failed or omitted a result. Prune only after a successful, appropriately scoped refresh and preserve the favorite reference or provide an explicit stale-favorite state.
+- Do not delete a user's favorite just because a provider temporarily failed or omitted a result. Provider refresh paths call prune only after successful data retrieval; guarded pruning keeps favorites and rows shared by multiple sources. Favorited stale entries currently remain in the local catalog because the UI does not yet have a separate stale-favorite presentation.
 - Keep network calls off Tkinter's UI thread; update widgets through the app's UI queue.
 - Do not print or paste access tokens, refresh tokens, passwords, API keys, or private account data into chat, screenshots, terminal logs, or Git commits.
 - Keep the API private to the tailnet. Do not enable Tailscale Funnel.

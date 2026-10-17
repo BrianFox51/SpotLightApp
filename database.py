@@ -335,39 +335,91 @@ def delete_item(mid):
     conn.execute("DELETE FROM favorites WHERE media_id = ?", (mid,))
     conn.commit(); conn.close()
 
+def move_favorites(old_media_id, new_media_id):
+    """Move every local account's favorite links when a catalog ID is migrated."""
+    if not old_media_id or not new_media_id or old_media_id == new_media_id:
+        return 0
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute("""INSERT OR IGNORE INTO favorites (username, media_id, created)
+            SELECT username, ?, created FROM favorites WHERE media_id = ?""", (new_media_id, old_media_id))
+        moved = cursor.rowcount
+        conn.execute("DELETE FROM favorites WHERE media_id = ?", (old_media_id,))
+        conn.commit()
+        return moved
+    finally:
+        conn.close()
+
+def _prunable_provider_ids(conn, rows, source):
+    """Return only un-favorited rows owned exclusively by this provider."""
+    favorite_ids = {row[0] for row in conn.execute("SELECT DISTINCT media_id FROM favorites")}
+    prunable = []
+    for media_id_value, sources_json in rows:
+        try:
+            sources = json.loads(sources_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(sources, list) or source not in sources:
+            continue
+        if any(value != source for value in sources) or media_id_value in favorite_ids:
+            continue
+        prunable.append(media_id_value)
+    return prunable
+
+def _delete_catalog_rows(conn, media_ids):
+    """Delete catalog rows and their dependent event/credit records in one transaction."""
+    if not media_ids:
+        return
+    marks = ",".join("?" for _ in media_ids)
+    for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"), ("media_items", "id")):
+        conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", media_ids)
+
 def prune_source(source, keep_ids):
-    """Removes items that came from `source` (e.g. 'Community') but are no longer in the feed. Returns how many."""
-    conn = sqlite3.connect(DB_PATH); keep = set(keep_ids)
-    gone = [r[0] for r in conn.execute("SELECT id FROM media_items WHERE sources LIKE ?", (f'%"{source}"%',)).fetchall() if r[0] not in keep]
-    if gone:
-        marks = ",".join("?" for _ in gone)
-        for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"), ("favorites", "media_id"), ("media_items", "id")):
-            conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", gone)
-    conn.commit(); conn.close()
-    return len(gone)
+    """Remove stale provider-only rows; empty results are treated as inconclusive."""
+    if not keep_ids:
+        return 0
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        keep = set(keep_ids)
+        rows = conn.execute("SELECT id, sources FROM media_items WHERE sources LIKE ?", (f'%"{source}"%',)).fetchall()
+        candidates = [row for row in rows if row[0] not in keep]
+        gone = _prunable_provider_ids(conn, candidates, source)
+        _delete_catalog_rows(conn, gone)
+        conn.commit()
+        return len(gone)
+    finally:
+        conn.close()
 
 
 def prune_category_source(category, source, keep_ids):
-    """Remove stale rows for one provider without touching other categories or sources."""
-    conn = sqlite3.connect(DB_PATH); keep = set(keep_ids)
-    gone = [r[0] for r in conn.execute("SELECT id FROM media_items WHERE category = ? AND sources LIKE ?",
-                                      (category, f'%"{source}"%')).fetchall() if r[0] not in keep]
-    if gone:
-        marks = ",".join("?" for _ in gone)
-        for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"), ("favorites", "media_id"), ("media_items", "id")):
-            conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", gone)
-    conn.commit(); conn.close()
-    return len(gone)
+    """Remove stale provider-only rows; empty results are inconclusive, not a clear-all."""
+    if not keep_ids:
+        return 0
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        keep = set(keep_ids)
+        rows = conn.execute("SELECT id, sources FROM media_items WHERE category = ? AND sources LIKE ?",
+                            (category, f'%"{source}"%')).fetchall()
+        candidates = [row for row in rows if row[0] not in keep]
+        gone = _prunable_provider_ids(conn, candidates, source)
+        _delete_catalog_rows(conn, gone)
+        conn.commit()
+        return len(gone)
+    finally:
+        conn.close()
 
 
 def prune_expired_watchmode(cutoff):
-    """Delete Watchmode catalog rows older than the Free plan's 30-day cache window."""
+    """Delete expired Watchmode-only rows unless a local account has favorited them."""
     conn = sqlite3.connect(DB_PATH)
-    gone = [row[0] for row in conn.execute(
-        "SELECT id FROM media_items WHERE category IN ('streaming', 'movies', 'tv') AND sources LIKE ? AND last_updated < ?",
-        ('%"Watchmode"%', cutoff)
-    ).fetchall()]
-    conn.close()
-    for media_id_value in gone:
-        delete_item(media_id_value)
-    return len(gone)
+    try:
+        rows = conn.execute(
+            "SELECT id, sources FROM media_items WHERE category IN ('streaming', 'movies', 'tv') AND sources LIKE ? AND last_updated < ?",
+            ('%"Watchmode"%', cutoff)
+        ).fetchall()
+        gone = _prunable_provider_ids(conn, rows, "Watchmode")
+        _delete_catalog_rows(conn, gone)
+        conn.commit()
+        return len(gone)
+    finally:
+        conn.close()

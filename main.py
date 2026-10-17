@@ -473,6 +473,7 @@ class App(ctk.CTk):
                 "score": g(item, "score", 0), "desc": g(item, "description"),
                 "first_shown": g(item, "first_shown"), "recent_shown": g(item, "recent_shown"), "srcs": ["Watchmode"],
             })
+            database.move_favorites(g(item, "id"), database.media_id(target, title, "Streaming"))
             target_meta = self.meta.d.setdefault(f"{target}|{title}", {})
             for field, value in old_meta.items():
                 if field.startswith("watchmode_"): target_meta[field] = value
@@ -1714,7 +1715,7 @@ class App(ctk.CTk):
 
     def apply_watchmode(self, catalogs, say=None):
         """Store one bounded page per media type; source links are loaded on demand."""
-        now = int(time.time()); keep_ids = {"movies": [], "tv": []}; totals = {}; media_rows = []
+        now = int(time.time()); totals = {}; media_rows = []
         for cat, api_cat in (("movies", "movies"), ("tv", "tv")):
             rows = catalogs.get(api_cat, []) or []; totals[api_cat] = len(rows)
             for result in rows:
@@ -1735,16 +1736,14 @@ class App(ctk.CTk):
                     "desc": overview, "first_shown": year, "recent_shown": "Available to stream in the US",
                     "srcs": ["Watchmode"],
                 }))
-                keep_ids[cat].append(database.media_id(cat, title, "Streaming"))
                 meta = self.meta.d.setdefault(f"{cat}|{title}", {})
                 meta.update({"watchmode_genre": genre, "watchmode_genres": genres, "watchmode_id": watch_id, "watchmode_catalog": True,
                              "watchmode_type": result.get("type") or ("Movie" if cat == "movies" else "TV Series"), "watchmode_catalog_at": now})
                 for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
         database.save_media_items(media_rows)
-        pruned = sum(database.prune_category_source(cat, "Watchmode", keep_ids[cat]) for cat in ("movies", "tv"))
         for key in [key for key in self.meta.d if key.startswith("streaming|")]: self.meta.d.pop(key, None)
         self.meta.save()
-        message = f"Watchmode refreshed: {totals.get('movies', 0)} movies and {totals.get('tv', 0)} TV series listed; {pruned} stale items removed."
+        message = f"Watchmode refreshed: {totals.get('movies', 0)} movies and {totals.get('tv', 0)} TV series listed. Older cached entries expire after 30 days."
         if say: say(message)
         dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
         if self.cat in {"movies", "tv"} and self.sel is None and not dashboard_visible:
