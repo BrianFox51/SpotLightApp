@@ -12,6 +12,7 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - Server account creation is not connected to the desktop Create Profile form. That form still creates a local SQLite profile.
 - If server sign-in fails but the same credentials match a local account, the app falls back to local sign-in. Guest access remains available.
 - Favorites in the desktop app remain local SQLite records. The server client has favorites API methods, but the UI does not call them and no local-to-server favorite mapping or sync is implemented.
+- The dashboard's six category count tiles open their matching category views, and the account-specific Favorites tile and in-app Favorites button open a dedicated Favorites list. Guest activation shows the registration prompt. Favorite items remain tied to the current local username.
 - Server sign-out currently clears the desktop session; it does not call the API revoke endpoint. The refresh token is not persisted or used to restore a server session after restarting the app.
 - Login recovery links open local account recovery dialogs. They operate on profiles stored on this PC and do not recover or reset server credentials.
 - The Git working tree was clean at `aa0205f` when these notes were reviewed.
@@ -75,18 +76,17 @@ The profile response includes fields such as `full_name`, `state`, `zip`, `bio`,
 - Do not print or paste access tokens, refresh tokens, passwords, API keys, or private account data into chat, screenshots, terminal logs, or Git commits.
 - Keep the API private to the tailnet. Do not enable Tailscale Funnel.
 
-## Recommended next work
+## Next implementation priorities
 
-1. Audit the dashboard count definitions against the records and cards actually shown. Decide whether the state-specific tile counts titles or events, then align its label, query, and documentation.
-2. Define source/category identity, refresh success criteria, and expiry rules. Verify that provider failures do not prune valid cached items or favorites.
-3. Make the dashboard statistic cards intentional quick links, with visible hover/focus feedback and destinations mapped to the existing category/event views.
-4. Build one dedicated Favorites page and make both dashboard and in-app navigation open that same page. Keep the guest registration prompt and local favorites behavior explicit until server sync is designed.
-5. Add automatic refresh on dashboard entry only after the count/cache audit. Preserve usable cached results when offline or a provider fails; require an explicit refresh after changing the search area.
-6. Separately plan server registration, token refresh/revocation, and favorite synchronization. Do not imply those features are live until the desktop UI uses them.
+1. Audit dashboard counts against the actual saved and visible cards. In particular, confirm whether the state-specific tile counts titles or event-linked titles and align its query and label.
+2. Define provider refresh success and expiry rules, then verify that provider failures cannot prune valid cached items or favorites.
+3. Add automatic refresh on dashboard entry only after the count/cache audit. Preserve cached results when offline or a provider fails; require explicit refresh after changing the search area.
+4. Separately plan server registration, token refresh/revocation, and favorite synchronization. Do not imply those features are live until the desktop UI uses them.
 
 ## Items still to verify
 
 - Whether category totals match distinct cards visible in each category after filtering, pagination, expired-event hiding, and provider merges.
+- Whether dashboard category tile hover feedback is sufficiently visible across supported display scaling settings.
 - Whether provider IDs are available in `item["srcs"]` or another stable field and which ID to use when multiple sources supply an item.
 - Whether sign-out should revoke the current server refresh token and how errors should be handled.
 - A safe definition of stale catalog data that preserves user favorites and does not treat temporary provider outages as successful empty results.

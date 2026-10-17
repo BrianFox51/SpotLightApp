@@ -319,6 +319,19 @@ def is_favorite(username, item_id):
     finally:
         conn.close()
 
+def load_favorites(username):
+    """Return this local account's favorited catalog items, newest favorite first."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("""SELECT m.* FROM favorites f
+            JOIN media_items m ON m.id = f.media_id
+            WHERE f.username = ? AND m.category IN ('music', 'movies', 'tv', 'games', 'sports', 'festivals')
+            ORDER BY f.created DESC, m.title COLLATE NOCASE""", (username or "__guest__",))
+        return [dict(row) for row in rows.fetchall()]
+    finally:
+        conn.close()
+
 def set_favorite(username, item_id, favorite):
     """Add or remove one user's favorite without changing the catalog item."""
     conn = sqlite3.connect(DB_PATH)

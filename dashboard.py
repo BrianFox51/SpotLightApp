@@ -126,6 +126,8 @@ class Gate(ctk.CTkFrame):
                 s.say("No online sources are configured yet. Saved cards are available; add API keys or ZIP details, then refresh.")
 
     def clear(s):
+        if hasattr(s.app, "hide_favorites_button"):
+            s.app.hide_favorites_button()
         for w in s.winfo_children(): w.destroy()
         s.imgs.clear(); s.place(x=0, y=0, relwidth=1, relheight=1); s.lift()
         # Keep the whole gate usable on high-DPI screens with limited vertical space.
@@ -155,6 +157,7 @@ class Gate(ctk.CTkFrame):
 
     # ---------- sign in / create account / guest ----------
     def show_login(s):
+        s.app.hide_favorites_button()
         s.clear(); s.header(); p=s.page
         ctk.CTkLabel(p, text="Beta version 0.2.1.0", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
@@ -568,7 +571,7 @@ class Gate(ctk.CTkFrame):
         cards = [("Titles found", st["total"]), ("🎵 Music", c.get("music", 0)), ("🎬 Movies", c.get("movies", 0)), ("📺 TV", c.get("tv", 0)),
                  ("🎮 Games", c.get("games", 0)), ("🏆 Sports", c.get("sports", 0)), ("🎪 Festivals", c.get("festivals", 0)), ("📍 Local events saved", st["events"]),
                  ("⭐ Favorites", st["favorites"]),
-                 (f"Items with saved events in {state}" if state else "Items with saved events in your state", st["near_state"] if state else "-")]
+                 (f"Items with saved events in {state}" if state else "Saved event titles", st["near_state"] if state else "")]
         grid = ctk.CTkFrame(p, fg_color="transparent"); grid.pack()
         s.stats_value_labels = []
         for i, (label, val) in enumerate(cards):
@@ -576,6 +579,11 @@ class Gate(ctk.CTkFrame):
             value_label = ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD); value_label.pack(pady=(16, 0))
             s.stats_value_labels.append(value_label)
             ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5").pack()
+            quick_category = {1: "music", 2: "movies", 3: "tv", 4: "games", 5: "sports", 6: "festivals"}.get(i)
+            if quick_category:
+                s.bind_stat_card(f, lambda category=quick_category: s.open_dashboard_category(category))
+            elif i == 8:
+                s.bind_stat_card(f, s.open_dashboard_favorites)
         cfg = events.load_cfg(); live = ctk.CTkFrame(p, fg_color=CARD, corner_radius=14); live.pack(pady=(6, 0))
         def saved_api_value(name, source):
             if name == "igdb_client_secret":
@@ -728,7 +736,7 @@ class Gate(ctk.CTkFrame):
         s.status.pack(pady=(0, 4))
         ctk.CTkLabel(live, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#9aa0b5", font=("Segoe UI", 11)).pack(pady=(0, 10))
         s.sponsor_footer(p)
-        enter_button = ctk.CTkButton(dashboard_actions, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.place_forget)
+        enter_button = ctk.CTkButton(dashboard_actions, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.enter_spotlight)
         enter_button.pack(side="left", padx=8)
         promote_button = ctk.CTkButton(dashboard_actions, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote)
         promote_button.pack(side="left", padx=8)
@@ -758,10 +766,45 @@ class Gate(ctk.CTkFrame):
         st = database.dashboard_stats(city, state, u.get("username") or "__guest__")
         cats = st["cats"]
         values = [st["total"], cats.get("music", 0), cats.get("movies", 0), cats.get("tv", 0), cats.get("games", 0),
-                  cats.get("sports", 0), cats.get("festivals", 0), st["events"], st["favorites"], st["near_state"] if state else "-"]
+                  cats.get("sports", 0), cats.get("festivals", 0), st["events"], st["favorites"], st["near_state"] if state else ""]
         for label, value in zip(s.stats_value_labels, values):
             try: label.configure(text=str(value))
             except Exception: pass
+
+    def bind_stat_card(s, card, action):
+        """Make a dashboard stat tile a clear, hoverable shortcut."""
+        def activate(_event=None):
+            action()
+            return "break"
+        def hover(_event=None):
+            try: card.configure(fg_color=HOVER)
+            except Exception: pass
+        def restore(_event=None):
+            try: card.configure(fg_color=CARD)
+            except Exception: pass
+        pending = [card]
+        while pending:
+            widget = pending.pop()
+            widget.bind("<Button-1>", activate, add="+")
+            widget.bind("<Enter>", hover, add="+")
+            widget.bind("<Leave>", restore, add="+")
+            for child in widget.winfo_children(): pending.append(child)
+
+    def open_dashboard_category(s, category):
+        s.app.pinned = True
+        s.app.open_cat(category)
+        s.place_forget()
+
+    def enter_spotlight(s):
+        s.place_forget()
+        s.app.show_favorites_button()
+
+    def open_dashboard_favorites(s):
+        user = s.user or {}
+        if not user.get("username"):
+            messagebox.showinfo("Spotlight", "Please register to enable this feature", parent=s.winfo_toplevel())
+            return
+        s.app.open_favorites()
 
     def show_profile_editor(s):
         if not s.user or not s.user.get("username"):

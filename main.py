@@ -389,7 +389,7 @@ class App(ctk.CTk):
         self._prune_expired_event_cache()
         self._prune_watchmode_metadata()
         self._migrate_watchmode_catalog()
-        self.page = 0; self.search_job = None; self.search_active = False; self.search_results = []; self.search_query = ""
+        self.page = 0; self.search_job = None; self.search_active = False; self.favorites_active = False; self.favorites_button_visible = False; self.search_results = []; self.search_query = ""
         self.uiq, self.sel_cat, self.pinned, self._hj, self._bio = queue.Queue(), None, False, None, None
         self.cast_all = self._tproc = None
         self.load_logos(); self.after(300, self.set_icon)
@@ -543,6 +543,12 @@ class App(ctk.CTk):
             b = ctk.CTkButton(rail, text=ico, width=60, height=52, corner_radius=14, font=("Segoe UI Emoji", 25), fg_color="transparent", hover_color=HOVER, command=lambda k=key: self.click_cat(k))
             b.pack(pady=(10, 2), padx=12); self.navbtn[key] = b; b.bind("<Enter>", lambda e, k=key: self.hover_open(k), add="+"); b.bind("<Leave>", self.hover_leave, add="+")
             self.nav_tips.append(Tip(b, name, hexc(ACC[key])))
+        self.favorites_button = ctk.CTkButton(
+            self, text="☆  FAVORITES", width=170, height=40, corner_radius=12,
+            font=("Segoe UI", 14, "bold"), fg_color="#9b6a1c", hover_color="#c48a2a",
+            text_color="#fff3d2", command=self.open_favorites,
+        )
+        self.after_idle(self.position_favorites_button)
         pb = ctk.CTkButton(rail, text="📣  Promote\nyour event", width=140, height=64, corner_radius=14,
                            font=("Segoe UI", 14, "bold"), fg_color="#9b6a1c", hover_color="#c48a2a",
                            command=self.open_promote)
@@ -591,6 +597,7 @@ class App(ctk.CTk):
     def on_resize(self, e=None):
         if self._rs: self.after_cancel(self._rs)
         def go():
+            self.position_favorites_button()
             iw = self.insp.winfo_width()
             if iw > 200:
                 text_width = max(180, self.insp._reverse_widget_scaling(iw) - 40)
@@ -749,6 +756,11 @@ class App(ctk.CTk):
         active = not database.is_favorite(user_key, item_id)
         database.set_favorite(user_key, item_id, active)
         button.configure(text="★" if active else "☆", text_color="#ffd84d" if active else "#a8aab2")
+        if self.favorites_active and not active:
+            self.show_favorites()
+            if getattr(self, "gate", None) is not None and self.gate.winfo_ismapped():
+                self.gate.update_dashboard_stats()
+            return
         item_category = item.get("_search_category", self.cat) if isinstance(item, dict) else self.cat
         if not active and item_category in UNIT and not self.event_is_visible(item, item_category):
             if item_category == self.cat:
@@ -797,6 +809,24 @@ class App(ctk.CTk):
         if self.pinned and self.cat == cat and shown: self.pinned = False; self.hide_panel(); return
         if self.cat == cat and not shown and self.sel is not None and self.sel_cat == cat: self.pinned = True; self.show_panel(); return
         self.pinned = True; self.open_cat(cat)
+    def open_favorites(self):
+        user = getattr(getattr(self, "gate", None), "user", None) or {}
+        if not user.get("username"):
+            messagebox.showinfo("Spotlight", "Please register to enable this feature", parent=self.winfo_toplevel())
+            return
+        self.gate.place_forget()
+        self.hide_favorites_button()
+        self.pinned = True
+        self.show_favorites()
+        self.show_panel()
+    def show_favorites_button(self):
+        self.favorites_button_visible = True
+        self.position_favorites_button()
+    def hide_favorites_button(self):
+        self.favorites_button_visible = False
+        button = getattr(self, "favorites_button", None)
+        if button is not None:
+            button.place_forget()
     def pick_genre(self, n):
         if not self.pinned: self.pinned = True; self.open_cat(self.cat)
         self.page = 0
@@ -810,6 +840,7 @@ class App(ctk.CTk):
         except queue.Empty: pass
         self.after(200, self.poll_ui)
     def open_cat(self, cat):
+        self.show_favorites_button()
         self.cat, self.sel = cat, None; acc = ACC[cat]
         self.hero.configure(height=190 if cat in {"movies", "tv"} else 150)
         self.items = self.load_catalog_items(cat); self.mark_nav(cat)
@@ -978,6 +1009,7 @@ class App(ctk.CTk):
 
     def run_search(self):
         self.search_job = None
+        self.favorites_active = False
         query = self.search_entry.get().strip()
         if not query:
             self.clear_search(); return
@@ -1009,13 +1041,18 @@ class App(ctk.CTk):
 
     def show_search_results(self, message=None):
         self.search_active = True
+        if self.favorites_active:
+            self.hide_favorites_button()
+        else:
+            self.show_favorites_button()
         scope_label = "Everywhere" if self.search_scope.get() == "Everywhere" else next((name for key, _icon, name in NAV if key == self.cat), "This section")
-        self.feed_title.configure(text=f"Search · {scope_label} ({len(self.search_results)})")
+        self.feed_title.configure(text=f"⭐ Favorites ({len(self.search_results)})" if self.favorites_active else f"Search · {scope_label} ({len(self.search_results)})")
         self.back.pack(side="left", before=self.feed_title)
         for widget in self.list.winfo_children(): widget.destroy()
         self.list.grid_columnconfigure((0, 1), weight=0)
         if message or not self.search_results:
-            ctk.CTkLabel(self.list, text=message or "No matches yet. Try another name, artist, venue, or keyword.",
+            empty_message = "Your favorites will appear here. Star a catalog card to save it to this list." if self.favorites_active else "No matches yet. Try another name, artist, venue, or keyword."
+            ctk.CTkLabel(self.list, text=message or empty_message,
                          text_color="#9aa0b5", font=("Segoe UI", 15), wraplength=300, justify="left").pack(padx=16, pady=32)
             self.shown, self.cards, self.imgs = [], {}, []
             return
@@ -1052,13 +1089,50 @@ class App(ctk.CTk):
         ctk.CTkButton(controls, text="Next  ›", width=110, fg_color=CARD, hover_color=HOVER, state="normal" if self.page + 1 < page_count else "disabled",
                       command=lambda: self.change_feed_page(1)).pack(side="right")
 
+    def show_favorites(self):
+        """Show this registered local account's saved catalog cards."""
+        user = getattr(getattr(self, "gate", None), "user", None) or {}
+        if not user.get("username"):
+            messagebox.showinfo("Spotlight", "Please register to enable this feature", parent=self.winfo_toplevel())
+            return
+        if self.search_job:
+            try: self.after_cancel(self.search_job)
+            except Exception: pass
+            self.search_job = None
+        if self.search_entry.get(): self.search_entry.delete(0, "end")
+        self.search_query = ""
+        self.favorites_active = True
+        self.page = 0
+        self.search_results = []
+        for item in database.load_favorites(self.favorite_user_key()):
+            category = g(item, "category")
+            result = dict(item)
+            result["_search_category"] = category
+            self.search_results.append((category, result))
+        self.sel = None
+        self.sel_cat = None
+        self.close_bio()
+        self.show_promo(True)
+        self.poster.pack_forget()
+        for button in (self.find_btn, self.buy_btn, self.trailer_btn, self.mute_btn):
+            button.pack_forget()
+        self.title.configure(text="Your favorites")
+        self.meta_lbl.configure(text="")
+        self.desc.configure(text="")
+        for frame in (self.cast_row, self.ev_box, self.about_box):
+            for widget in frame.winfo_children():
+                widget.destroy()
+        self.show_search_results()
+        self.show_panel()
+
     def clear_search(self):
         if self.search_job:
             try: self.after_cancel(self.search_job)
             except Exception: pass
             self.search_job = None
         if self.search_entry.get(): self.search_entry.delete(0, "end")
-        self.search_query = ""; self.search_results = []; self.search_active = False; self.page = 0
+        self.search_query = ""; self.search_results = []; self.search_active = False; self.favorites_active = False; self.page = 0
+        self.show_favorites_button()
         if hasattr(self, "list") and self.list.winfo_exists(): self.show_genres()
 
     def back_to_list(self):
@@ -1066,7 +1140,7 @@ class App(ctk.CTk):
             self.sel = None; self.sel_cat = None; self.close_bio(); self.show_promo(True)
             self.poster.pack_forget()
             for button in (self.find_btn, self.buy_btn, self.trailer_btn, self.mute_btn): button.pack_forget()
-            self.title.configure(text="Search results"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
+            self.title.configure(text="Favorites" if self.favorites_active else "Search results"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
             for frame in (self.cast_row, self.ev_box, self.about_box):
                 for widget in frame.winfo_children(): widget.destroy()
             return
@@ -1849,7 +1923,26 @@ class App(ctk.CTk):
         threading.Thread(target=loop, daemon=True).start()
     def poll_status(self):
         self.hero.status = ("● Checking connection", "#FFB300") if self.online is None else (("● Online · synced", "#4CAF50") if self.online else ("● Offline · local library active", "#FF9800"))
+        self.position_favorites_button()
         self.after(1000, self.poll_status)
+
+    def position_favorites_button(self):
+        """Keep Favorites just left of the hero's connection status at any window width."""
+        button = getattr(self, "favorites_button", None)
+        hero = getattr(self, "hero", None)
+        scale_widget = getattr(self, "insp", None)
+        if button is None or hero is None or scale_widget is None:
+            return
+        if not self.favorites_button_visible:
+            button.place_forget()
+            return
+        status_text = getattr(hero, "status", ("",))[0]
+        status_font = tkfont.Font(family="Segoe UI", size=22, weight="bold")
+        logical_width = scale_widget._reverse_widget_scaling(hero.winfo_width())
+        logical_status_width = scale_widget._reverse_widget_scaling(status_font.measure(status_text))
+        right_edge = logical_width - 20 - logical_status_width - 12
+        button.place(x=max(190, right_edge), y=4, anchor="ne")
+        button.lift()
 
 if __name__ == "__main__":
     App().mainloop()
