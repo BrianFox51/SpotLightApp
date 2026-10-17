@@ -4,7 +4,7 @@
 
 1. `main.py` imports the application modules, sets up project-relative media folders, defines category and display helpers, and defines the `App` window.
 2. `App.__init__` loads display metadata, seeds demo catalog entries once, builds the interface, starts background connection monitoring, and creates the sign-in/dashboard gate.
-3. `dashboard.Gate` handles guest access, account creation, sign-in, location lookup from a ZIP code, dashboard statistics, API credential editing, provider status indicators, and the combined Refresh action.
+3. `dashboard.Gate` handles guest access, local profile creation, server-first sign-in with local-account fallback, local-only account recovery, profile display, dashboard statistics, API credential editing/status, and the combined Refresh action. Server sign-in and profile retrieval use `server_client.py`. The dashboard still requires manual refresh; automatic refresh, interactive statistic quick links, and a dedicated Favorites page are planned.
 4. The catalog is read from SQLite through `database.py`. Selecting a title displays its local metadata, cast/crew, events, and notes. Spotlight Search stays available above the content and searches saved catalog fields across all categories or the current category.
 5. `online.py` retrieves missing details in background threads. It also syncs TMDB theatrical/airing catalogs and a bounded Watchmode U.S. streaming catalog; per-title Watchmode provider links are requested on demand. `main.py` returns results to the UI thread through a queue.
 6. `events.py` syncs Ticketmaster events; `community.py` syncs an optional organizer feed. The `promote.py` form lets an organizer prepare a submission for curator review.
@@ -17,11 +17,15 @@ The application entry point and primary UI controller. It owns navigation, media
 
 ### `database.py`
 
-Creates and accesses four SQLite tables: media items, cast/crew, local events, and users. It also hashes passwords, saves notes, and provides catalog/dashboard queries. The database is stored under the current user's `.spotlight` directory, not beside the Python files.
+Creates and accesses SQLite tables for media items, cast/crew, local events, users, and local favorites. It also hashes local passwords, saves notes, and provides catalog/dashboard queries. Dashboard counts currently sum catalog rows by database category; the state-specific dashboard value currently counts local events despite its “Titles in [state]” label. See `docs/frontend-backend-integration.md` for the count/cache audit and ownership rules. The database is stored under the current user's `.spotlight` directory, not beside the Python files.
 
 ### `dashboard.py`
 
 Implements the sign-in/create-account/guest screen and the dashboard shown after entry. It uses the database for account operations and statistics, and `events.py` for local event configuration and sync controls.
+
+### `server_client.py`
+
+Small HTTP client for the optional backend. Reads `SPOTLIGHT_API_BASE_URL`, sends JSON requests, attaches bearer access tokens for protected calls, and translates HTTP/network failures into `ServerAPIError`. The desktop currently uses login and profile retrieval; registration, token refresh/revocation, and server favorites methods are not fully wired to the UI.
 
 ### `online.py`
 
