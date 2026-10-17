@@ -47,7 +47,7 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - The Favorites count is scoped to the current local username. It is independent of catalog totals and event counts.
 - Refresh completion records a general `last_refresh_at` timestamp after the scheduled jobs finish. A timestamp alone does not establish that each provider succeeded; provider status is tracked separately.
 - TVmaze and Ohio schedule syncs prune stale provider-only records after non-empty results. Watchmode fetches only a bounded first page per media type, so absent results are not immediately pruned; its 30-day age-based cleanup removes old, un-favorited, Watchmode-only records. Review each source's success and expiry rules before adding automatic pruning.
-- Ticketmaster sync does not prune event records that disappear or pass their dates. Past event cards are hidden by visibility checks, while that behavior is separate from deleting their database rows.
+- Ticketmaster sync does not prune records just because they disappear from a refresh result. At app startup, dated Ticketmaster and Ohio event rows whose dates have passed are removed from the cache unless any local account favorited them; those favorites remain available. Event cards hidden by visibility checks are therefore cleaned from the cache on the next app launch.
 
 ## Confirmed backend API contract
 

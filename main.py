@@ -386,6 +386,7 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.close_app)
         self.meta, self.cat, self.genre, self.items, self.sel, self.imgs, self.cards, self.online, self._rs = Meta(), "music", None, [], None, [], {}, None, None
         database.prune_expired_watchmode(int(time.time()) - 30 * 86400)
+        self._prune_expired_event_cache()
         self._prune_watchmode_metadata()
         self._migrate_watchmode_catalog()
         self.page = 0; self.search_job = None; self.search_active = False; self.search_results = []; self.search_query = ""
@@ -428,6 +429,17 @@ class App(ctk.CTk):
             except Exception: pass
 
     # ---------- data ----------
+    def _prune_expired_event_cache(self):
+        """Remove past event-feed rows at startup, leaving favorited items available."""
+        today = datetime.date.today()
+        expired_ids = []
+        for category in UNIT:
+            for item in database.load_local_catalog(category):
+                end_date = event_end_date(item)
+                if end_date is not None and end_date < today:
+                    expired_ids.append(g(item, "id"))
+        return database.prune_expired_event_items(expired_ids)
+
     def seed(self):
         """Remove legacy sample records so categories contain only real catalog data."""
         for category in ACC:

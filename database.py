@@ -370,9 +370,11 @@ def _delete_catalog_rows(conn, media_ids):
     """Delete catalog rows and their dependent event/credit records in one transaction."""
     if not media_ids:
         return
-    marks = ",".join("?" for _ in media_ids)
-    for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"), ("media_items", "id")):
-        conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", media_ids)
+    for offset in range(0, len(media_ids), 500):
+        batch = media_ids[offset:offset + 500]
+        marks = ",".join("?" for _ in batch)
+        for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"), ("media_items", "id")):
+            conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", batch)
 
 def prune_source(source, keep_ids):
     """Remove stale provider-only rows; empty results are treated as inconclusive."""
@@ -418,6 +420,36 @@ def prune_expired_watchmode(cutoff):
             ('%"Watchmode"%', cutoff)
         ).fetchall()
         gone = _prunable_provider_ids(conn, rows, "Watchmode")
+        _delete_catalog_rows(conn, gone)
+        conn.commit()
+        return len(gone)
+    finally:
+        conn.close()
+
+def prune_expired_event_items(expired_ids):
+    """Remove expired event-feed rows while retaining favorites and non-event sources."""
+    if not expired_ids:
+        return 0
+    event_sources = {"Ticketmaster", "OhioFestivals.net"}
+    expired_ids = list(dict.fromkeys(expired_ids))
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = []
+        for offset in range(0, len(expired_ids), 500):
+            batch = expired_ids[offset:offset + 500]
+            marks = ",".join("?" for _ in batch)
+            rows.extend(conn.execute(f"SELECT id, sources FROM media_items WHERE id IN ({marks})", batch).fetchall())
+        favorite_ids = {row[0] for row in conn.execute("SELECT DISTINCT media_id FROM favorites")}
+        gone = []
+        for media_id_value, sources_json in rows:
+            try:
+                sources = json.loads(sources_json or "[]")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(sources, list) or not sources or not set(sources).issubset(event_sources):
+                continue
+            if media_id_value not in favorite_ids:
+                gone.append(media_id_value)
         _delete_catalog_rows(conn, gone)
         conn.commit()
         return len(gone)
