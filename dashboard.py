@@ -141,7 +141,7 @@ class Gate(ctk.CTkFrame):
     # ---------- sign in / create account / guest ----------
     def show_login(s):
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 0.1.1.0", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 0.2.1.0", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
@@ -153,14 +153,29 @@ class Gate(ctk.CTkFrame):
 
         cfg = events.load_cfg()
 
+        username_row = ctk.CTkFrame(
+            sign_in_form, fg_color="transparent", width=320, height=26
+        )
+        username_row.pack(pady=(10, 0))
+        username_row.pack_propagate(False)
         ctk.CTkLabel(
-            sign_in_form,
+            username_row,
             text="Username or email",
-            width=320,
             anchor="w",
             font=("Segoe UI", 13, "bold"),
             text_color="#cfd3e0",
-        ).pack(pady=(10, 0))
+        ).place(relx=0, rely=0.5, anchor="w")
+        ctk.CTkButton(
+            username_row,
+            text="Forgot username?",
+            width=112,
+            height=24,
+            fg_color="transparent",
+            hover_color=HOVER,
+            text_color="#55aaff",
+            font=("Segoe UI", 11),
+            command=lambda: s.recover_account("username"),
+        ).place(relx=1, rely=0.5, anchor="e")
         u1 = ctk.CTkEntry(
             sign_in_form,
             placeholder_text="Enter username or email",
@@ -172,14 +187,29 @@ class Gate(ctk.CTkFrame):
         if remembered_user:
             u1.insert(0, remembered_user)
 
+        password_row = ctk.CTkFrame(
+            sign_in_form, fg_color="transparent", width=320, height=26
+        )
+        password_row.pack(pady=(4, 0))
+        password_row.pack_propagate(False)
         ctk.CTkLabel(
-            sign_in_form,
+            password_row,
             text="Password",
-            width=320,
             anchor="w",
             font=("Segoe UI", 13, "bold"),
             text_color="#cfd3e0",
-        ).pack(pady=(4, 0))
+        ).place(relx=0, rely=0.5, anchor="w")
+        ctk.CTkButton(
+            password_row,
+            text="Forgot password?",
+            width=112,
+            height=24,
+            fg_color="transparent",
+            hover_color=HOVER,
+            text_color="#55aaff",
+            font=("Segoe UI", 11),
+            command=lambda: s.recover_account("password"),
+        ).place(relx=1, rely=0.5, anchor="e")
         p1 = ctk.CTkEntry(
             sign_in_form,
             placeholder_text="Enter password",
@@ -201,12 +231,32 @@ class Gate(ctk.CTkFrame):
             variable=remember,
         ).pack(anchor="w", padx=70, pady=(2, 2))
 
+        ctk.CTkLabel(
+            sign_in_form,
+            text=(
+                "Recovery links work with local profiles saved on this PC. "
+                "Server account recovery is not available yet."
+            ),
+            text_color="#85899a",
+            font=("Segoe UI", 10),
+            wraplength=500,
+            justify="center",
+        ).pack(pady=(0, 4))
+
         ctk.CTkButton(
             sign_in_form,
             text="Sign In",
             width=320,
             command=lambda: s.do_login(u1.get(), p1.get(), remember.get()),
         ).pack(pady=8)
+
+        ctk.CTkButton(
+            sign_in_form,
+            text="Continue as guest",
+            fg_color=CARD,
+            hover_color=HOVER,
+            command=s.guest,
+        ).pack(pady=(2, 4))
 
         s.login_err = ctk.CTkLabel(
             sign_in_form,
@@ -218,32 +268,6 @@ class Gate(ctk.CTkFrame):
         s.login_err.pack(pady=(0, 4))
         p1.bind("<Return>", lambda e: s.do_login(u1.get(), p1.get(), remember.get()))
 
-        recovery = ctk.CTkFrame(sign_in_form, fg_color="transparent")
-        recovery.pack(pady=(0, 4))
-        ctk.CTkButton(
-            recovery, text="Forgot username?", width=130, height=24,
-            fg_color="transparent", hover_color=HOVER,
-            text_color="#85899a", state="disabled",
-        ).pack(side="left", padx=3)
-        ctk.CTkButton(
-            recovery, text="Forgot password?", width=130, height=24,
-            fg_color="transparent", hover_color=HOVER,
-            text_color="#85899a", state="disabled",
-        ).pack(side="left", padx=3)
-        ctk.CTkLabel(
-            sign_in_form,
-            text="Account recovery is temporarily unavailable.",
-            text_color="#85899a",
-            font=("Segoe UI", 11),
-        ).pack(pady=(0, 4))
-
-        ctk.CTkButton(
-            sign_in_form,
-            text="Continue as guest",
-            fg_color=CARD,
-            hover_color=HOVER,
-            command=s.guest,
-        ).pack(pady=(8, 4))
         s.sponsor_footer(sign_in_form)
 
         form = ctk.CTkScrollableFrame(
