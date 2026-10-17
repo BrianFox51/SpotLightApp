@@ -247,6 +247,8 @@ class Stage(tk.Canvas):
         self.t0, self.photo, self.size, self.status = time.time(), None, (0, 0), ("", "#888888")
         self.vinst = self.vp = self.vf = None; self.vlc_on = False; self.audio_only = False; self.muted = True; self.still = self.on_click = self._sk = None
         self.bind("<Button-1>", lambda e: self.on_click and self.on_click())
+        if mode == "hero":
+            self.tag_bind("favorites_badge", "<Button-1>", lambda _e: self.master.open_favorites())
         self.after(50, self.tick)
     def play(self, video, kind, accent, cover=None, lines=("", ""), dim=1.0, still=None):
         self.muted = True
@@ -337,6 +339,12 @@ class Stage(tk.Canvas):
             self.create_text(x + 2, y + 2, text=s, font=f, fill="#000000", anchor=anc); self.create_text(x, y, text=s, font=f, fill=col, anchor=anc)
         if self.mode == "hero":
             (self.create_image(22, 8, image=Stage.logo, anchor="nw") if Stage.logo else txt(24, 12, "SPOTLIGHT", 15)); txt(w - 20, 16, self.status[0], 22, self.status[1], "ne", True)
+            app = self.master
+            badge = getattr(app, "favorites_badge_photo", None)
+            if badge is not None and getattr(app, "favorites_button_visible", False):
+                status_font = tkfont.Font(family="Segoe UI", size=22, weight="bold")
+                badge_right = max(190, w - 20 - status_font.measure(self.status[0]) - 12)
+                self.create_image(badge_right, 4, image=badge, anchor="ne", tags=("favorites_badge",))
             if self.lines[0].upper() in {"CINEMA FEEDS", "TV NETWORKS"}:
                 if Stage.tmdb_cinema_logo:
                     self.create_image(22, 48, image=Stage.tmdb_cinema_logo, anchor="nw")
@@ -543,11 +551,16 @@ class App(ctk.CTk):
             b = ctk.CTkButton(rail, text=ico, width=60, height=52, corner_radius=14, font=("Segoe UI Emoji", 25), fg_color="transparent", hover_color=HOVER, command=lambda k=key: self.click_cat(k))
             b.pack(pady=(10, 2), padx=12); self.navbtn[key] = b; b.bind("<Enter>", lambda e, k=key: self.hover_open(k), add="+"); b.bind("<Leave>", self.hover_leave, add="+")
             self.nav_tips.append(Tip(b, name, hexc(ACC[key])))
-        self.favorites_button = ctk.CTkButton(
-            self, text="☆  FAVORITES", width=170, height=40, corner_radius=12,
-            font=("Segoe UI", 14, "bold"), fg_color="#9b6a1c", hover_color="#c48a2a",
-            text_color="#fff3d2", command=self.open_favorites,
-        )
+        self.favorites_badge_photo = None
+        badge_path = os.path.join(MEDIA, "favorites_celebration_badge.png")
+        try:
+            with Image.open(badge_path) as source:
+                badge = source.convert("RGBA")
+                resampling = getattr(Image, "Resampling", Image)
+                badge.thumbnail((210, 80), resampling.LANCZOS)
+            self.favorites_badge_photo = ImageTk.PhotoImage(badge, master=self)
+        except (OSError, AttributeError, ValueError):
+            pass
         self.after_idle(self.position_favorites_button)
         pb = ctk.CTkButton(rail, text="📣  Promote\nyour event", width=140, height=64, corner_radius=14,
                            font=("Segoe UI", 14, "bold"), fg_color="#9b6a1c", hover_color="#c48a2a",
@@ -1989,22 +2002,10 @@ class App(ctk.CTk):
         self.after(1000, self.poll_status)
 
     def position_favorites_button(self):
-        """Keep Favorites just left of the hero's connection status at any window width."""
-        button = getattr(self, "favorites_button", None)
+        """The hero canvas composites the transparent Favorites badge beside its status."""
         hero = getattr(self, "hero", None)
-        scale_widget = getattr(self, "insp", None)
-        if button is None or hero is None or scale_widget is None:
+        if hero is None:
             return
-        if not self.favorites_button_visible:
-            button.place_forget()
-            return
-        status_text = getattr(hero, "status", ("",))[0]
-        status_font = tkfont.Font(family="Segoe UI", size=22, weight="bold")
-        logical_width = scale_widget._reverse_widget_scaling(hero.winfo_width())
-        logical_status_width = scale_widget._reverse_widget_scaling(status_font.measure(status_text))
-        right_edge = logical_width - 20 - logical_status_width - 12
-        button.place(x=max(190, right_edge), y=4, anchor="ne")
-        button.lift()
 
 if __name__ == "__main__":
     App().mainloop()

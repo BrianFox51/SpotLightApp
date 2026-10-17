@@ -2,9 +2,10 @@
 Branding images are loaded from the project media/ folder, with root/assets fallbacks."""
 import os, glob, json, re, shutil, threading, urllib.request, webbrowser, time
 from datetime import datetime
+import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageTk
 import database
 import events
 import community
@@ -86,24 +87,164 @@ class Gate(ctk.CTkFrame):
         s.auto_refresh_started = False
         s.auto_refresh_after_id = None
         s.refresh_outcomes = {"success": 0, "failed": 0, "skipped": 0}
-        s.refresh_banner, s.refresh_controls = None, []
+        s.refresh_banner = None
+        s.refresh_disabled_widgets = []
+        s.login_disabled_widgets = []
+        s.scroll_block_bindings = []
+        s.refresh_card_styles = []
+        s.update_in_progress = False
+        s.disco_frames, s.disco_frame_index = [], 0
+        s.disco_after_id = None
+        s.dashboard_logo_canvas = None
         s.tmdb_footer_logo = load_tmdb_logo(base, "tmdb_footer.png")
         s.place(x=0, y=0, relwidth=1, relheight=1); s.show_login()
 
     def set_refreshing(s, active, jobs=0):
-        """Show refresh progress while leaving cached catalog navigation available."""
+        """Show progress and lock the dashboard until every refresh source returns."""
         s.refreshing = bool(active)
         s.refresh_jobs_left = jobs if active else 0
         if s.refresh_banner is not None and s.refresh_banner.winfo_exists():
             if active:
-                s.refresh_banner.pack(pady=(0, 12))
+                try: s.page._parent_canvas.yview_moveto(0)
+                except Exception: pass
+                s.refresh_banner.pack(fill="x", pady=(0, 5))
             else:
                 s.refresh_banner.pack_forget()
-        for widget, ready_state in s.refresh_controls:
-            try:
-                widget.configure(state="disabled" if active else ready_state)
-            except Exception:
-                pass
+        s.update_in_progress = bool(active)
+        s.set_dashboard_logo_animation(active)
+        s.set_page_controls_disabled(active, "refresh_disabled_widgets")
+        s.set_stat_cards_disabled(active)
+        s.set_page_scrolling_disabled(active)
+
+    def set_page_controls_disabled(s, disabled, storage_name):
+        """Disable interactive controls and gray their surfaces, restoring prior styles later."""
+        saved_states = getattr(s, storage_name, [])
+        if disabled:
+            saved_states = []
+            pending = list(s.page.winfo_children()) if getattr(s, "page", None) is not None else []
+            interactive = {"CTkButton", "CTkOptionMenu", "CTkComboBox", "CTkSwitch", "CTkSlider",
+                           "CTkCheckBox", "CTkRadioButton", "CTkEntry", "CTkTextbox",
+                           "CTkSegmentedButton", "CTkTabview", "CTkScrollbar"}
+            while pending:
+                widget = pending.pop()
+                pending.extend(widget.winfo_children())
+                if widget.__class__.__name__ not in interactive:
+                    continue
+                try:
+                    state = widget.cget("state")
+                except Exception:
+                    continue
+                if state in ("normal", "disabled", "readonly"):
+                    styles = {}
+                    for option in ("fg_color", "text_color", "hover_color", "button_color",
+                                   "button_hover_color", "progress_color"):
+                        try: styles[option] = widget.cget(option)
+                        except Exception: pass
+                    saved_states.append((widget, state, styles))
+                    if state != "disabled":
+                        try:
+                            widget.configure(state="disabled")
+                            if widget.__class__.__name__ == "CTkButton":
+                                widget.configure(fg_color="#45454f", hover_color="#45454f", text_color="#9a9aa3")
+                            else:
+                                gray = {name: "#45454f" for name in styles
+                                        if name in {"fg_color", "hover_color", "button_color", "button_hover_color", "progress_color"}}
+                                if "text_color" in styles: gray["text_color"] = "#9a9aa3"
+                                if gray: widget.configure(**gray)
+                        except Exception: pass
+        else:
+            for widget, ready_state, styles in saved_states:
+                try:
+                    if widget.winfo_exists():
+                        widget.configure(**styles)
+                        widget.configure(state=ready_state)
+                except Exception: pass
+            saved_states = []
+        setattr(s, storage_name, saved_states)
+
+    def set_stat_cards_disabled(s, disabled):
+        if disabled:
+            if s.refresh_card_styles: return
+            s.refresh_card_styles = []
+            for card in getattr(s, "stats_cards", []):
+                widgets = [card]
+                pending = list(card.winfo_children())
+                while pending:
+                    widget = pending.pop()
+                    pending.extend(widget.winfo_children())
+                    widgets.append(widget)
+                for widget in widgets:
+                    option = "fg_color" if isinstance(widget, ctk.CTkFrame) else "text_color"
+                    try:
+                        old_value = widget.cget(option)
+                        s.refresh_card_styles.append((widget, option, old_value))
+                        widget.configure(**{option: "#303039" if option == "fg_color" else "#85858f"})
+                    except Exception: pass
+        else:
+            for widget, option, value in s.refresh_card_styles:
+                try:
+                    if widget.winfo_exists(): widget.configure(**{option: value})
+                except Exception: pass
+            s.refresh_card_styles = []
+
+    def set_page_scrolling_disabled(s, disabled):
+        if disabled:
+            s.scroll_block_bindings = []
+            page_widgets = [s.page]
+            pending = list(s.page.winfo_children())
+            while pending:
+                widget = pending.pop()
+                pending.extend(widget.winfo_children())
+                page_widgets.append(widget)
+            def block_scroll(_event): return "break"
+            for widget in page_widgets:
+                for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                    try:
+                        binding_id = widget.bind(sequence, block_scroll, add="+")
+                        if binding_id: s.scroll_block_bindings.append((widget, sequence, binding_id))
+                    except Exception: pass
+        else:
+            for widget, sequence, binding_id in s.scroll_block_bindings:
+                try: widget.unbind(sequence, binding_id)
+                except Exception: pass
+            s.scroll_block_bindings = []
+
+    def load_disco_frames(s):
+        if s.disco_frames: return
+        path = os.path.join(os.path.dirname(__file__), "media", "refresh_disco.gif")
+        try:
+            with Image.open(path) as animation:
+                for index in range(getattr(animation, "n_frames", 1)):
+                    animation.seek(index)
+                    frame = animation.convert("RGBA")
+                    frame.thumbnail((112, 112), Image.Resampling.LANCZOS)
+                    s.disco_frames.append(ImageTk.PhotoImage(frame, master=s))
+        except (OSError, ValueError, AttributeError):
+            s.disco_frames = []
+
+    def animate_disco_frame(s):
+        canvas = s.dashboard_logo_canvas
+        if not s.update_in_progress or canvas is None or not canvas.winfo_exists() or not s.disco_frames:
+            if canvas is not None and canvas.winfo_exists(): canvas.delete("update_disco")
+            s.disco_after_id = None
+            return
+        canvas.delete("update_disco")
+        image = s.disco_frames[s.disco_frame_index]
+        s.disco_frame_index = (s.disco_frame_index + 1) % len(s.disco_frames)
+        canvas.create_image(canvas.winfo_reqwidth() / 2, canvas.winfo_reqheight() * 0.32,
+                            image=image, tags=("update_disco",))
+        s.disco_after_id = s.after(70, s.animate_disco_frame)
+
+    def set_dashboard_logo_animation(s, active):
+        if active:
+            s.load_disco_frames()
+            if s.disco_after_id is None: s.animate_disco_frame()
+        elif s.disco_after_id is not None:
+            try: s.after_cancel(s.disco_after_id)
+            except Exception: pass
+            s.disco_after_id = None
+            if s.dashboard_logo_canvas is not None and s.dashboard_logo_canvas.winfo_exists():
+                s.dashboard_logo_canvas.delete("update_disco")
 
     def refresh_job_finished(s, outcome="success"):
         """Record each source result and summarize the completed refresh accurately."""
@@ -143,8 +284,16 @@ class Gate(ctk.CTkFrame):
         s.page.pack(fill="both", expand=True)
 
     def logo_label(s, w):
-        if s.logo is None: ctk.CTkLabel(s.page, text="SPOTLIGHT", font=("Segoe UI", 40, "bold")).pack(pady=(24, 4)); return
-        ci = ctk.CTkImage(s.logo, size=(w, int(w * s.logo.height / s.logo.width))); s.imgs.append(ci); ctk.CTkLabel(s.page, text="", image=ci).pack(pady=(10, 0))
+        if s.logo is None:
+            ctk.CTkLabel(s.page, text="SPOTLIGHT", font=("Segoe UI", 40, "bold")).pack(pady=(24, 4))
+            return
+        height = int(w * s.logo.height / s.logo.width)
+        logo = s.logo.convert("RGBA").resize((w, height), Image.Resampling.LANCZOS)
+        s.dashboard_logo_photo = ImageTk.PhotoImage(logo, master=s)
+        canvas = tk.Canvas(s.page, width=w, height=height, bg=BG, highlightthickness=0)
+        canvas.pack(pady=(10, 0))
+        canvas.create_image(w / 2, height / 2, image=s.dashboard_logo_photo, tags=("brand_logo",))
+        s.dashboard_logo_canvas = canvas
 
     def header(s):
         s.logo_label(270)
@@ -284,14 +433,16 @@ class Gate(ctk.CTkFrame):
             command=s.guest,
         ).pack(pady=(2, 4))
 
+        login_status_row = ctk.CTkFrame(sign_in_form, fg_color="transparent")
+        login_status_row.pack(pady=(0, 4))
         s.login_err = ctk.CTkLabel(
-            sign_in_form,
+            login_status_row,
             text="",
             text_color="#ff6b6b",
             font=("Segoe UI", 13),
             wraplength=500,
         )
-        s.login_err.pack(pady=(0, 4))
+        s.login_err.pack(side="left")
         p1.bind("<Return>", lambda e: s.do_login(u1.get(), p1.get(), remember.get()))
 
         s.sponsor_footer(sign_in_form)
@@ -441,7 +592,13 @@ class Gate(ctk.CTkFrame):
             return
 
         local_user = database.verify_user(identifier, p)
-        s.login_err.configure(text="Signing in…", text_color="#c9a45c")
+        s.login_err.configure(text="Please wait while the system updates", text_color="#c9a45c")
+        s.login_wait_started = time.monotonic()
+        s.update_in_progress = True
+        s.set_dashboard_logo_animation(True)
+        s.set_page_scrolling_disabled(True)
+        s.set_page_controls_disabled(True, "login_disabled_widgets")
+        s.login_err.update_idletasks()
 
         def worker():
             client = None
@@ -464,6 +621,19 @@ class Gate(ctk.CTkFrame):
         threading.Thread(target=worker, daemon=True).start()
 
     def finish_login(s, identifier, password, remember, local_user, client, tokens, profile, error):
+        wait_started = getattr(s, "login_wait_started", None)
+        if wait_started is not None:
+            remaining_ms = max(0, 700 - int((time.monotonic() - wait_started) * 1000))
+            if remaining_ms:
+                s.after(remaining_ms, lambda: s.finish_login(
+                    identifier, password, remember, local_user, client, tokens, profile, error
+                ))
+                return
+            s.login_wait_started = None
+            s.update_in_progress = False
+            s.set_dashboard_logo_animation(False)
+            s.set_page_scrolling_disabled(False)
+            s.set_page_controls_disabled(False, "login_disabled_widgets")
         if profile and tokens:
             server_profile = profile.get("profile") or {}
             user = dict(local_user or {})
@@ -594,10 +764,25 @@ class Gate(ctk.CTkFrame):
             where = "Add your location in your profile to see what's near you"
         s.location_label = ctk.CTkLabel(p, text="📍  " + where, text_color="#9aa0b5", font=("Segoe UI", 14))
         s.location_label.pack(pady=(2, 22))
-        s.refresh_banner = ctk.CTkLabel(p, text="⏳  Updating Spotlight in the background. Your saved cards remain available while it works.",
-                                        fg_color="#42351d", text_color="#f0cf78", corner_radius=10,
-                                        font=("Segoe UI", 14, "bold"), padx=16, pady=11, wraplength=900)
-        if s.refreshing: s.refresh_banner.pack(pady=(0, 12))
+        s.top_status_area = ctk.CTkFrame(p, fg_color="transparent")
+        s.top_status_area.pack(pady=(0, 10))
+        s.refresh_banner = ctk.CTkFrame(s.top_status_area, fg_color="#42351d", corner_radius=10)
+        ctk.CTkLabel(s.refresh_banner, text="Please wait while the system updates",
+                     fg_color="transparent", text_color="#f0cf78",
+                     font=("Segoe UI", 14, "bold"), padx=16, pady=11).pack()
+        if s.refreshing:
+            s.refresh_banner.pack(fill="x", pady=(0, 5))
+        last_refresh_at = cfg.get("last_refresh_at")
+        last_refresh_text = "Last refreshed: " + (
+            datetime.fromtimestamp(last_refresh_at).strftime("%b %d, %Y at %I:%M %p")
+            if isinstance(last_refresh_at, (int, float)) and last_refresh_at > 0 else "Not yet refreshed"
+        )
+        s.last_refresh_label = ctk.CTkLabel(s.top_status_area, text=last_refresh_text,
+                                            text_color="#c9a45c", font=("Segoe UI", 11, "bold"))
+        s.last_refresh_label.pack(pady=(0, 2))
+        s.status = ctk.CTkLabel(s.top_status_area, text="",
+                                text_color="#9aa0b5", font=("Segoe UI", 11), wraplength=560, justify="center")
+        s.status.pack(pady=(0, 4))
         dashboard_actions = ctk.CTkFrame(p, fg_color="transparent"); dashboard_actions.pack(pady=(0, 18))
         cards = [("Titles found", st["total"]), ("🎵 Music", c.get("music", 0)), ("🎬 Movies", c.get("movies", 0)), ("📺 TV", c.get("tv", 0)),
                  ("🎮 Games", c.get("games", 0)), ("🏆 Sports", c.get("sports", 0)), ("🎪 Festivals", c.get("festivals", 0)), ("📍 Local events saved", st["events"]),
@@ -606,8 +791,10 @@ class Gate(ctk.CTkFrame):
         grid = ctk.CTkFrame(p, fg_color="transparent"); grid.pack()
         s.stats_value_labels = []
         s.stats_caption_labels = []
+        s.stats_cards = []
         for i, (label, val) in enumerate(cards):
             f = ctk.CTkFrame(grid, width=200, height=110, fg_color=CARD, corner_radius=16); f.grid(row=i // 5, column=i % 5, padx=8, pady=8); f.pack_propagate(False)
+            s.stats_cards.append(f)
             value_label = ctk.CTkLabel(f, text=str(val), font=("Segoe UI", 34, "bold"), text_color=GOLD); value_label.pack(pady=(16, 0))
             s.stats_value_labels.append(value_label)
             caption = ctk.CTkLabel(f, text=label, font=("Segoe UI", 13), text_color="#9aa0b5")
@@ -660,9 +847,6 @@ class Gate(ctk.CTkFrame):
                 save_api_keys()
             s.refresh_outcomes = {"success": 0, "failed": 0, "skipped": 0}
             selected_state = s.app.search_area_state
-            s.refresh_controls = [(area_selector, "normal"), (refresh_button, "normal"), (signout_button, "normal")]
-            if clear_cache_button is not None:
-                s.refresh_controls.append((clear_cache_button, "normal"))
             s.set_refreshing(True, jobs=6)
             current = events.load_cfg()
             report = lambda key, state, message: s.app.uiq.put((s.update_api_status, (key, state, message)))
@@ -789,17 +973,6 @@ class Gate(ctk.CTkFrame):
                       command=lambda: webbrowser.open("https://api.watchmode.com/")).pack(side="left")
         ctk.CTkButton(event_row, text="IGDB / Twitch", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
                       command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps")).pack(side="left")
-        last_refresh_at = cfg.get("last_refresh_at")
-        last_refresh_text = "Last refreshed: " + (
-            datetime.fromtimestamp(last_refresh_at).strftime("%b %d, %Y at %I:%M %p")
-            if isinstance(last_refresh_at, (int, float)) and last_refresh_at > 0 else "Not yet refreshed"
-        )
-        s.last_refresh_label = ctk.CTkLabel(live, text=last_refresh_text,
-                                            text_color="#c9a45c", font=("Segoe UI", 11, "bold"))
-        s.last_refresh_label.pack(pady=(0, 2))
-        s.status = ctk.CTkLabel(live, text="",
-                                text_color="#9aa0b5", font=("Segoe UI", 11), wraplength=560, justify="center")
-        s.status.pack(pady=(0, 4))
         ctk.CTkLabel(live, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#9aa0b5", font=("Segoe UI", 11)).pack(pady=(0, 10))
         s.sponsor_footer(p)
         enter_button = ctk.CTkButton(dashboard_actions, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.enter_spotlight)
@@ -813,9 +986,6 @@ class Gate(ctk.CTkFrame):
         signout_button = ctk.CTkButton(dashboard_actions, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out)
         signout_button.pack(side="left", padx=8)
         s.dashboard_action_buttons = [enter_button, promote_button, community_button, signout_button]
-        s.refresh_controls = [(area_selector, "normal"), (refresh_button, "normal"), (signout_button, "normal")]
-        if clear_cache_button is not None:
-            s.refresh_controls.append((clear_cache_button, "normal"))
         if s.refreshing: s.set_refreshing(True, jobs=s.refresh_jobs_left)
         ctk.CTkLabel(p, text="Community and profile tools are paused until their service and windows are ready.", text_color="#85899a", font=("Segoe UI", 11)).pack(pady=(0, 8))
         if not s.auto_refresh_started:
@@ -906,12 +1076,15 @@ class Gate(ctk.CTkFrame):
     def bind_stat_card(s, card, action):
         """Make a dashboard stat tile a clear, hoverable shortcut."""
         def activate(_event=None):
+            if s.refreshing: return "break"
             action()
             return "break"
         def hover(_event=None):
+            if s.refreshing: return
             try: card.configure(fg_color=HOVER)
             except Exception: pass
         def restore(_event=None):
+            if s.refreshing: return
             try: card.configure(fg_color=CARD)
             except Exception: pass
         pending = [card]

@@ -11,6 +11,8 @@ __pycache__/
 /media/**
 !/media/
 !/media/spotlight.ico
+!/media/favorites_celebration_badge.png
+!/media/refresh_disco.gif
 # Keep the owner-supplied TMDB vector marks as source assets.
 !/media/tmdb/
 !/media/tmdb/*.svg
