@@ -4,7 +4,7 @@
 
 Track the desktop app's integration with the optional SpotLight backend, including which behavior is implemented and which remains local or planned. Update this file whenever an API field, identity mapping, sign-in flow, or data ownership rule changes.
 
-## Current status (2026-10-17)
+## Current status (2026-10-18)
 
 - The desktop app can sign in to the optional SpotLight server using either an account username or email plus password.
 - The client reads its API base URL from `SPOTLIGHT_API_BASE_URL`; it must include `/api/v1`. Keep any personal Tailscale address in local configuration, not public source.
@@ -17,7 +17,9 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - Favorites in the desktop app remain local SQLite records. The server client has favorites API methods, but the UI does not call them and no local-to-server favorite mapping or sync is implemented.
 - The dashboard's six category count tiles open their matching category views, and the account-specific Favorites tile and in-app Favorites button open a dedicated Favorites list. Guest activation shows the registration prompt. Favorite items remain tied to the current local username.
 - Server sign-out currently clears the desktop session; it does not call the API revoke endpoint. The refresh token is not persisted or used to restore a server session after restarting the app.
-- Login recovery links open local account recovery dialogs. They operate on profiles stored on this PC and do not recover or reset server credentials.
+- Login recovery links use the online server when `SPOTLIGHT_API_BASE_URL` is configured: username reminders go to the account email, and password recovery uses a one-time 8-digit code that expires after 15 minutes. Local profile recovery remains available as a separate action and still requires its local verification fields. Online recovery requires SMTP settings on the server; without them, the server returns a configuration message and sends no email.
+- The dashboard Community action opens a server-backed member discussion board for online accounts. Members can create categorized posts, reply, and report content; admins can review reports and hide content. Local profiles and guests are prompted to sign in to an online account. This is a moderated member board, not a public event listing feed.
+- Community and recovery API storage is added through SQLAlchemy models and a versioned Alembic migration. The current API startup also runs `Base.metadata.create_all`, so it creates missing tables automatically on startup; do not manually run the new migration against the existing server without first checking its Alembic revision state.
 
 ## Confirmed desktop behavior
 
@@ -68,6 +70,15 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 | List server favorites | `GET /favorites` | Bearer access token | List of favorites |
 | Add server favorite | `POST /favorites` | `category`, `provider_id`; bearer access token | Server favorite record |
 | Remove server favorite | `DELETE /favorites/{favorite_id}` | Bearer access token | HTTP 204 |
+| Request username reminder | `POST /auth/recovery/username` | Account email | Generic accepted response; matching account username is emailed |
+| Request password reset code | `POST /auth/recovery/password` | Account email | Generic accepted response; matching account receives an 8-digit, 15-minute code |
+| Complete password reset | `POST /auth/recovery/password/complete` | Email, reset code, new 12+ character password | Password changed; existing sessions revoked |
+| List Community discussions | `GET /community/posts` | Bearer token; optional category and pagination | Member-visible posts and reply counts |
+| Create Community discussion | `POST /community/posts` | Bearer token; category, title, body | Created post |
+| List or create replies | `GET/POST /community/posts/{post_id}/replies` | Bearer token; reply body for POST | Visible replies or created reply |
+| Report Community content | `POST /community/reports` | Bearer token; post/reply ID and reason | Accepted report |
+| Review Community reports | `GET /admin/community/reports` | Admin bearer token | Pending reports and content preview |
+| Moderate Community report | `POST /admin/community/reports/{report_id}/moderation` | Admin bearer token; `hide` or `dismiss` | Recorded moderation action |
 
 The profile response includes fields such as `full_name`, `state`, `zip`, `bio`, `interests`, `site`, and `avatar_ref`.
 
@@ -84,10 +95,11 @@ The profile response includes fields such as `full_name`, `state`, `zip`, `bio`,
 
 ## Next implementation priorities
 
-1. Verify dashboard category counts against visible cards after refresh, including provider merges, area filters, and expired-event pruning; the category tiles currently count the local catalog, while the saved-event tile is state-specific.
-2. Verify guest IP location success, denial, unavailable-network fallback, and offline cached-card display; verify that choosing a member state only takes effect after Refresh.
-3. Verify the admin cache-clear flow with a test account and confirm it preserves favorites and personal notes before using it on the main account.
-4. Separately plan token refresh/revocation and server favorite synchronization. Do not imply those features are live until the desktop UI uses them.
+1. Configure SMTP in the server's private `.env`, deploy the server changes, and verify delivery for username reminders and password reset codes using a non-production account. Never share SMTP credentials in chat or commit them.
+2. Try the Community board with an online standard account and verify create, reply, report, and admin hide/dismiss flows. Keep the board for trusted beta accounts until moderation and abuse handling have been reviewed.
+3. Verify dashboard category counts against visible cards after refresh, including provider merges, area filters, and expired-event pruning; the category tiles currently count the local catalog, while the saved-event tile is state-specific.
+4. Verify guest IP location success, denial, unavailable-network fallback, and offline cached-card display; verify that choosing a member state only takes effect after Refresh.
+5. Separately plan token refresh/revocation and server favorite synchronization. Do not imply those features are live until the desktop UI uses them.
 
 ## Items still to verify
 

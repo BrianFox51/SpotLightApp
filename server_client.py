@@ -132,3 +132,66 @@ class ServerClient:
             f"/favorites/{quote(favorite_id, safe='')}",
             access_token=access_token,
         )
+
+    def recover_username(self, email: str) -> dict[str, Any]:
+        return self._request("POST", "/auth/recovery/username", {"email": email})
+
+    def start_password_recovery(self, email: str) -> dict[str, Any]:
+        return self._request("POST", "/auth/recovery/password", {"email": email})
+
+    def complete_password_recovery(self, email: str, code: str, password: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/auth/recovery/password/complete",
+            {"email": email, "code": code, "password": password},
+        )
+
+    def list_community_posts(
+        self, access_token: str, category: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        query = f"?limit={limit}&offset={offset}"
+        if category:
+            query += "&category=" + quote(category, safe="")
+        return self._request("GET", "/community/posts" + query, access_token=access_token)
+
+    def create_community_post(
+        self, access_token: str, category: str, title: str, body: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST", "/community/posts",
+            {"category": category, "title": title, "body": body},
+            access_token=access_token,
+        )
+
+    def list_community_replies(self, access_token: str, post_id: str) -> list[dict[str, Any]]:
+        return self._request(
+            "GET", f"/community/posts/{quote(post_id, safe='')}/replies", access_token=access_token
+        )
+
+    def create_community_reply(
+        self, access_token: str, post_id: str, body: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST", f"/community/posts/{quote(post_id, safe='')}/replies",
+            {"body": body}, access_token=access_token,
+        )
+
+    def report_community_content(
+        self, access_token: str, target_type: str, target_id: str, reason: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST", "/community/reports",
+            {"target_type": target_type, "target_id": target_id, "reason": reason},
+            access_token=access_token,
+        )
+
+    def list_community_reports(self, access_token: str) -> list[dict[str, Any]]:
+        return self._request("GET", "/admin/community/reports", access_token=access_token)
+
+    def moderate_community_report(
+        self, access_token: str, report_id: str, action: str, reason: str = ""
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST", f"/admin/community/reports/{quote(report_id, safe='')}/moderation",
+            {"action": action, "reason": reason}, access_token=access_token,
+        )

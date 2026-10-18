@@ -23,6 +23,12 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=1, max_length=256)
 class RevokeRequest(BaseModel):
     refresh_token: str = Field(min_length=1, max_length=256)
+class RecoveryEmailRequest(BaseModel):
+    email: EmailStr
+class PasswordResetComplete(BaseModel):
+    email: EmailStr
+    code: str = Field(pattern=r"^\d{8}$")
+    password: str = Field(min_length=12, max_length=128)
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -90,4 +96,17 @@ class SubmissionResponse(BaseModel):
     status: str
 class ModerationRequest(BaseModel):
     action: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, max_length=1000)
+class CommunityPostCreate(BaseModel):
+    category: Literal["general", "events", "music", "movies_tv", "games", "sports", "festivals"]
+    title: str = Field(min_length=4, max_length=160)
+    body: str = Field(min_length=1, max_length=10000)
+class CommunityReplyCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=5000)
+class CommunityReportCreate(BaseModel):
+    target_type: Literal["post", "reply"]
+    target_id: str = Field(min_length=36, max_length=36)
+    reason: str = Field(min_length=5, max_length=1000)
+class CommunityModerationRequest(BaseModel):
+    action: Literal["dismiss", "hide"]
     reason: str | None = Field(default=None, max_length=1000)

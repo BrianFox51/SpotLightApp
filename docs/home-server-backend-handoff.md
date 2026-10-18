@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is a build brief and operating guide for adding an optional online backend to the existing Spotlight Windows desktop app. The current app is a local-first Tkinter application: profiles, favorites, catalog data, API settings, and pending event submissions are stored on the user's computer. A backend does not exist yet. The work below describes what a developer should build and how the owner can run it on a home server.
+This document is an operating and follow-up guide for the optional online backend used by the Spotlight Windows desktop app. The app remains local-first for catalog data, API settings, and local profiles, while the server provides online accounts, editable profiles, favorites endpoints, moderated event submissions, and a member discussion board. The home server is intended to run the API and PostgreSQL; this guide describes safe maintenance and the remaining setup needed for email recovery.
 
 The initial backend should provide shared Spotlight accounts, editable profiles, cross-device favorites, and moderated community event submissions. It should not move the media-provider API keys out of each user's local Spotlight settings.
 
@@ -50,11 +50,12 @@ Version the API from the beginning (`/api/v1`). Return predictable JSON errors, 
 | Health | `GET /api/v1/health` reports API and database readiness without exposing secrets or internal configuration. |
 | Accounts | `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, and session refresh/revoke endpoints. Login responses must not reveal whether an email or username exists. |
 | Profile | `GET /api/v1/me` and `PATCH /api/v1/me` for full name, unique username, verified email, state, ZIP, optional bio/interests/site, and avatar reference. Keep private email and ZIP out of public profile responses. |
-| Recovery | Username reminder and password-reset request endpoints that send a one-time email link. Return the same generic response whether or not an account exists. Store only a hash of each reset token; expire it and allow one use. Passwords cannot be retrieved; users set a new one. |
+| Recovery | Username reminders are emailed to the account address. Password recovery uses a one-time 8-digit email code, stored as a keyed hash, expires after 15 minutes, allows limited attempts, and revokes active sessions when used. Both request endpoints return a generic response whether or not an account exists. SMTP must be configured in the server's private `.env`. |
 | Favorites | `GET /api/v1/me/favorites`, `PUT /api/v1/me/favorites/{category}/{provider_id}`, and `DELETE` for the same key. Use stable catalog/provider IDs when available; do not depend on a display title alone. |
 | Community submissions | Create a submission, list the signed-in user's submissions and statuses, and allow withdrawal while pending. Store owner account, server-assigned `submitted_at`, event date range, type, venue, public link, and moderation status. |
 | Public community feed | `GET /api/v1/community/events` returns approved, non-expired listings with category/date filters and pagination. Never return contact email, reset data, or private account fields. |
 | Moderation | Admin-only review, approve, reject, and removal actions with reviewer, timestamp, and reason recorded. Do not make a user submission public before approval. |
+| Member Community | Authenticated members can create categorized discussions, reply, and report content; admins can review reports and hide or dismiss the reported content. This board is separate from the moderated event submission feed. |
 
 ### Event ordering policy
 
@@ -102,11 +103,12 @@ The following are the operator steps once the developer has added the service fi
 3. Clone the approved Spotlight repository on the server. Review the source and confirm `.env`, database files, uploaded images, and backups are ignored by Git.
 4. Copy `.env.example` to `.env`; set a unique database password, session-signing/sealing secret if used, allowed desktop origins/hosts, admin bootstrap method, and email delivery settings. Restrict file permissions. Never paste the values into chat or commit them.
 5. Start the database and API on the private network first: `docker compose up -d --build`.
-6. Apply schema migrations using the documented one-shot migration command, then verify `GET /api/v1/health` from the server and a private test device.
+6. For schema changes, inspect the current Alembic revision before applying a migration. The API currently calls `Base.metadata.create_all` at startup, which creates missing tables; do not run a migration against the live database until its revision state is known.
 7. Create the first admin account through a one-time local bootstrap command. Disable/remove that bootstrap path after use.
 8. Configure HTTPS/private access. For owner-only tests, use Tailscale Serve and verify that a device outside the tailnet cannot reach the API. For invited testers, configure the chosen public gateway, domain, TLS, firewall, and rate limits; verify only intended API routes are reachable.
-9. Point one development copy of Spotlight at the backend. Test signup, sign-in, profile privacy, recovery email, favorites, submission moderation/order, logout/revocation, and offline behavior before enabling more clients.
-10. Configure scheduled encrypted backups and log rotation. Perform a restore rehearsal to a separate test database. Record the tested recovery point and restore steps.
+9. Set SMTP relay values in the private server `.env` (host, port, sender, and relay credentials if required), rebuild/restart the API, then test username reminder and password reset delivery with a non-production account. Never paste mail credentials into chat or commit them.
+10. Point one development copy of Spotlight at the backend. Test signup, sign-in, profile privacy, recovery email, Community post/reply/report/moderation, favorites, submission moderation/order, logout/revocation, and offline behavior before enabling more clients.
+11. Configure scheduled encrypted backups and log rotation. Perform a restore rehearsal to a separate test database. Record the tested recovery point and restore steps.
 
 Routine operation:
 

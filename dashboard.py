@@ -581,31 +581,149 @@ class Gate(ctk.CTkFrame):
             status.configure(text=f"Could not load that image: {exc}", text_color="#ff6b6b")
 
     def recover_account(s, mode):
-        dialog = ctk.CTkToplevel(s.app); dialog.title("Recover Spotlight account"); dialog.geometry("440x390" if mode == "password" else "440x270"); dialog.configure(fg_color=BG); dialog.transient(s.app)
-        panel = ctk.CTkFrame(dialog, fg_color=PANEL); panel.pack(fill="both", expand=True, padx=18, pady=18)
-        ctk.CTkLabel(panel, text="Forgot username?" if mode == "username" else "Reset password on this PC", font=("Segoe UI", 18, "bold")).pack(pady=(14, 5))
-        ctk.CTkLabel(panel, text="Enter the email and ZIP code saved to your local profile." if mode == "username" else "This verifies the local profile on this PC; Spotlight does not send recovery email.", text_color="#9aa0b5", wraplength=360, justify="center").pack(pady=(0, 8))
+        try:
+            client = ServerClient()
+        except ServerAPIError:
+            return s.recover_local_account(mode)
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("Spotlight account recovery")
+        dialog.geometry("480x420" if mode == "password" else "480x300")
+        dialog.configure(fg_color=BG)
+        dialog.transient(s.app)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=18, pady=18)
+        ctk.CTkLabel(panel, text="Forgot username?" if mode == "username" else "Reset your password",
+                     font=("Segoe UI", 19, "bold"), text_color=GOLD).pack(pady=(14, 5))
+        instruction = ("Enter the email address on your online account. If it matches, we’ll email your username."
+                       if mode == "username" else
+                       "We’ll email an 8-digit reset code. It expires in 15 minutes and can be used once.")
+        ctk.CTkLabel(panel, text=instruction, text_color="#9aa0b5", wraplength=390,
+                     justify="center").pack(pady=(0, 10))
+        email_box = ctk.CTkEntry(panel, placeholder_text="Account email", width=350)
+        email_box.pack(pady=5)
+        result = ctk.CTkLabel(panel, text="", text_color="#ff6b6b", wraplength=390)
+        result.pack(pady=5)
+        reset_frame = ctk.CTkFrame(panel, fg_color="transparent")
+        code_box = new_password = reset_button = None
+        if mode == "password":
+            code_box = ctk.CTkEntry(reset_frame, placeholder_text="8-digit code from email", width=350)
+            code_box.pack(pady=4)
+            new_password = ctk.CTkEntry(reset_frame, placeholder_text="New password (12+ characters)", show="•", width=350)
+            new_password.pack(pady=4)
+            reset_button = ctk.CTkButton(reset_frame, text="Reset password", width=190,
+                                         command=lambda: s.submit_password_recovery(
+                                             client, dialog, email_box, code_box, new_password,
+                                             reset_button, result))
+            reset_button.pack(pady=5)
+        def send_instructions():
+            email_value = email_box.get().strip()
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email_value):
+                result.configure(text="Enter a valid email address.", text_color="#ff6b6b")
+                return
+            send_button.configure(state="disabled")
+            result.configure(text="Sending recovery instructions…", text_color=GOLD)
+            def worker():
+                try:
+                    response = (client.recover_username(email_value) if mode == "username"
+                                else client.start_password_recovery(email_value))
+                    outcome = (True, response.get("message", "Recovery instructions requested."))
+                except Exception as exc:
+                    outcome = (False, str(exc))
+                s.app.uiq.put((s.finish_recovery_request,
+                               (dialog, mode, email_box, reset_frame, send_button, result, *outcome)))
+            threading.Thread(target=worker, daemon=True).start()
+        send_button = ctk.CTkButton(panel, text="Email my username" if mode == "username" else "Send reset code",
+                                    width=210, command=send_instructions)
+        send_button.pack(pady=6)
+        ctk.CTkButton(panel, text="Recover a local profile on this PC", width=250,
+                      fg_color=CARD, hover_color=HOVER,
+                      command=lambda: (dialog.destroy(), s.recover_local_account(mode))).pack(pady=(8, 10))
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+
+    def finish_recovery_request(s, dialog, mode, email_box, reset_frame, send_button, result, ok, message):
+        try:
+            if not dialog.winfo_exists(): return
+            send_button.configure(state="normal")
+            result.configure(text=message, text_color="#77d18b" if ok else "#ff6b6b")
+            if ok and mode == "password":
+                email_box.configure(state="disabled")
+                send_button.configure(text="Code sent · send another", state="normal")
+                reset_frame.pack(pady=(0, 4))
+        except Exception:
+            pass
+
+    def submit_password_recovery(s, client, dialog, email_box, code_box, new_password, button, result):
+        email_value, code, password = email_box.get().strip(), code_box.get().strip(), new_password.get()
+        if not re.fullmatch(r"\d{8}", code):
+            result.configure(text="Enter the 8-digit code from your email.", text_color="#ff6b6b")
+            return
+        if len(password) < 12:
+            result.configure(text="Password needs at least 12 characters.", text_color="#ff6b6b")
+            return
+        button.configure(state="disabled")
+        result.configure(text="Resetting password…", text_color=GOLD)
+        def worker():
+            try:
+                response = client.complete_password_recovery(email_value, code, password)
+                outcome = (True, response.get("message", "Password reset. Sign in with your new password."))
+            except Exception as exc:
+                outcome = (False, str(exc))
+            s.app.uiq.put((s.finish_password_recovery, (dialog, button, result, *outcome)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_password_recovery(s, dialog, button, result, ok, message):
+        try:
+            if not dialog.winfo_exists(): return
+            button.configure(state="normal")
+            result.configure(text=message, text_color="#77d18b" if ok else "#ff6b6b")
+            if ok:
+                cfg = events.load_cfg()
+                cfg.pop("remembered_password_dpapi", None)
+                events.save_cfg(cfg)
+        except Exception:
+            pass
+
+    def recover_local_account(s, mode):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("Recover local Spotlight profile")
+        dialog.geometry("440x390" if mode == "password" else "440x270")
+        dialog.configure(fg_color=BG)
+        dialog.transient(s.app)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=18, pady=18)
+        ctk.CTkLabel(panel, text="Local profile recovery", font=("Segoe UI", 18, "bold")).pack(pady=(14, 5))
+        ctk.CTkLabel(panel, text="This only recovers a profile stored on this PC.", text_color="#9aa0b5",
+                     wraplength=360, justify="center").pack(pady=(0, 8))
         username = ctk.CTkEntry(panel, placeholder_text="Username", width=340) if mode == "password" else None
         if username: username.pack(pady=5)
-        email_box = ctk.CTkEntry(panel, placeholder_text="Account email", width=340); email_box.pack(pady=5)
-        zip_box = ctk.CTkEntry(panel, placeholder_text="ZIP code", width=340); zip_box.pack(pady=5)
+        email_box = ctk.CTkEntry(panel, placeholder_text="Account email", width=340)
+        email_box.pack(pady=5)
+        zip_box = ctk.CTkEntry(panel, placeholder_text="ZIP code", width=340)
+        zip_box.pack(pady=5)
         new_password = ctk.CTkEntry(panel, placeholder_text="New password (6+ characters)", show="•", width=340) if mode == "password" else None
         if new_password: new_password.pack(pady=5)
-        result = ctk.CTkLabel(panel, text="", text_color="#ff6b6b", wraplength=350); result.pack(pady=4)
-        def submit():
+        result = ctk.CTkLabel(panel, text="", text_color="#ff6b6b", wraplength=350)
+        result.pack(pady=4)
+        def submit_local():
             if mode == "username":
                 recovered = database.username_for_recovery(email_box.get(), zip_box.get())
-                result.configure(text=f"Username: {recovered}" if recovered else "No matching local profile was found.", text_color="#77d18b" if recovered else "#ff6b6b")
+                result.configure(text=f"Username: {recovered}" if recovered else "No matching local profile was found.",
+                                 text_color="#77d18b" if recovered else "#ff6b6b")
                 return
             password = new_password.get()
-            if len(password) < 6: result.configure(text="Password needs at least 6 characters."); return
+            if len(password) < 6:
+                result.configure(text="Password needs at least 6 characters.")
+                return
             if database.reset_password_locally(username.get(), email_box.get(), zip_box.get(), password):
                 cfg = events.load_cfg()
                 if str(cfg.get("remembered_username", "")).strip().lower() == username.get().strip().lower():
-                    cfg.pop("remembered_password_dpapi", None); events.save_cfg(cfg)
+                    cfg.pop("remembered_password_dpapi", None)
+                    events.save_cfg(cfg)
                 result.configure(text="Password reset. You can sign in now.", text_color="#77d18b")
-            else: result.configure(text="No matching local profile was found.")
-        ctk.CTkButton(panel, text="Find username" if mode == "username" else "Reset password", width=200, command=submit).pack(pady=7)
+            else:
+                result.configure(text="No matching local profile was found.")
+        ctk.CTkButton(panel, text="Find username" if mode == "username" else "Reset password",
+                      width=200, command=submit_local).pack(pady=7)
         dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
 
     def remember_credentials(s, username, password, enabled):
@@ -1095,15 +1213,14 @@ class Gate(ctk.CTkFrame):
         enter_button.pack(side="left", padx=8)
         promote_button = ctk.CTkButton(dashboard_actions, text="📣  Promote an event", width=190, height=46, fg_color="#9b6a1c", hover_color="#c48a2a", font=("Segoe UI", 15, "bold"), command=s.app.open_promote)
         promote_button.pack(side="left", padx=8)
-        community_available = False
         community_button = ctk.CTkButton(dashboard_actions, text="🌐 Community", width=130, height=46, fg_color=CARD, hover_color=HOVER,
-                                         state="disabled")
+                                         command=s.show_community_hub)
         community_button.pack(side="left", padx=8)
         signout_button = ctk.CTkButton(dashboard_actions, text="Sign out", width=100, height=46, fg_color=CARD, hover_color=HOVER, command=s.sign_out)
         signout_button.pack(side="left", padx=8)
         s.dashboard_action_buttons = [enter_button, promote_button, community_button, signout_button]
         if s.refreshing: s.set_refreshing(True, jobs=s.refresh_jobs_left)
-        ctk.CTkLabel(p, text="Community and profile tools are paused until their service and windows are ready.", text_color="#85899a", font=("Segoe UI", 11)).pack(pady=(0, 8))
+        ctk.CTkLabel(p, text="Spotlight Community is a member discussion board.", text_color="#85899a", font=("Segoe UI", 11)).pack(pady=(0, 8))
         if not s.auto_refresh_started:
             s.auto_refresh_started = True
             def start_auto_refresh():
@@ -1346,52 +1463,322 @@ class Gate(ctk.CTkFrame):
         if s.winfo_ismapped(): s.show_dashboard(message)
 
     def show_community_hub(s):
-        if not community.feed_url():
-            s.say("Community is paused until a shared event feed is configured."); return
-        dialog = ctk.CTkToplevel(s.app); dialog.title("Spotlight Community"); dialog.geometry("560x500"); dialog.configure(fg_color=BG); dialog.transient(s.app)
-        panel = ctk.CTkFrame(dialog, fg_color=PANEL); panel.pack(fill="both", expand=True, padx=18, pady=18)
-        ctk.CTkLabel(panel, text="Spotlight Community", font=("Segoe UI", 24, "bold"), text_color=GOLD).pack(pady=(18, 6))
-        user = s.user or {}
-        ctk.CTkLabel(panel, text=f"Welcome, {user.get('full_name') or user.get('display_name') or 'Guest'}",
-                     font=("Segoe UI", 17, "bold")).pack(pady=4)
-        if user.get("avatar_path"):
-            try:
-                with Image.open(user["avatar_path"]) as source: community_avatar = ImageOps.fit(source.convert("RGB"), (112, 112))
-                photo = ctk.CTkImage(light_image=community_avatar, dark_image=community_avatar, size=(56, 56)); s.imgs.append(photo)
-                ctk.CTkLabel(panel, text="", image=photo).pack(pady=4)
-            except (OSError, ValueError): pass
-        community_items = []
-        for category in ("sports", "festivals"):
-            for item in database.load_local_catalog(category):
-                try: sources = json.loads(item.get("sources") or "[]")
-                except (TypeError, ValueError): sources = []
-                if any(str(source).startswith("Community") for source in sources): community_items.append((category, item))
-        ctk.CTkLabel(panel, text=f"{len(community_items)} community event{'s' if len(community_items) != 1 else ''} saved on this PC",
-                     font=("Segoe UI", 16), text_color="#cfd3e0").pack(pady=(8, 4))
-        if not community.feed_url():
-            ctk.CTkLabel(panel, text="The shared event feed has not been configured yet. Local event submissions can still be prepared for review.",
-                         text_color="#d8bd76", wraplength=460, justify="center").pack(padx=28, pady=4)
-        ctk.CTkLabel(panel, text="Spotlight Community brings organizer-submitted events into one discoverable catalog. Listings are reviewed before they are shared through the configured public event feed.",
-                     text_color="#9aa0b5", wraplength=460, justify="center").pack(padx=28, pady=12)
-        ctk.CTkLabel(panel, text="Profiles and favorites are currently local to this PC. Cross-device member profiles, follows, comments, and messaging need a hosted community service and are not exposed as if they were already live.",
-                     text_color="#c9a45c", wraplength=460, justify="center").pack(padx=28, pady=8)
-        buttons = ctk.CTkFrame(panel, fg_color="transparent"); buttons.pack(pady=14)
-        if community_items:
-            ctk.CTkButton(buttons, text="Browse community events", command=lambda: s.browse_community_events(dialog, community_items)).pack(side="left", padx=5)
-        ctk.CTkButton(buttons, text="Refresh community listings", command=lambda: (dialog.destroy(), s.app.sync_community(s.say))).pack(side="left", padx=5)
-        ctk.CTkButton(buttons, text="Submit an event", fg_color="#9b6a1c", hover_color="#c48a2a",
-                      command=lambda: (dialog.destroy(), s.app.open_promote())).pack(side="left", padx=5)
-        ctk.CTkButton(panel, text="Close", fg_color=CARD, hover_color=HOVER, command=dialog.destroy).pack(pady=(0, 14))
+        client = getattr(s, "server_client", None)
+        token = getattr(s, "server_access_token", None)
+        if not client or not token:
+            messagebox.showinfo("Spotlight Community", "Create or sign in to an online Spotlight account to join the Community.", parent=s.winfo_toplevel())
+            return
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("Spotlight Community")
+        dialog.geometry("940x700")
+        dialog.minsize(760, 540)
+        dialog.configure(fg_color=BG)
+        dialog.transient(s.app)
+        root = ctk.CTkFrame(dialog, fg_color=PANEL)
+        root.pack(fill="both", expand=True, padx=16, pady=16)
+        heading = ctk.CTkFrame(root, fg_color="transparent")
+        heading.pack(fill="x", padx=12, pady=(12, 6))
+        ctk.CTkLabel(heading, text="Spotlight Community", font=("Segoe UI", 25, "bold"), text_color=GOLD).pack(side="left")
+        ctk.CTkLabel(heading, text=f"Member: {(s.user or {}).get('username', '')}", text_color="#9aa0b5").pack(side="right", padx=10)
+        controls = ctk.CTkFrame(root, fg_color="transparent")
+        controls.pack(fill="x", padx=12, pady=4)
+        category_values = {"All topics": None, "General": "general", "Events": "events", "Music": "music",
+                          "Movies & TV": "movies_tv", "Games": "games", "Sports": "sports", "Festivals": "festivals"}
+        category = ctk.StringVar(value="All topics")
+        ctk.CTkOptionMenu(controls, variable=category, values=list(category_values), width=160,
+                          command=lambda _value: s.load_community_posts(client, token, dialog, posts, status,
+                                                                        category_values[category.get()])).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(controls, text="Refresh", width=90,
+                      command=lambda: s.load_community_posts(client, token, dialog, posts, status,
+                                                             category_values[category.get()])).pack(side="left", padx=4)
+        ctk.CTkButton(controls, text="＋ Start a discussion", width=170, fg_color="#9b6a1c", hover_color="#c48a2a",
+                      command=lambda: s.create_community_post_dialog(client, token, dialog, category, category_values,
+                                                                     posts, status)).pack(side="right", padx=4)
+        if str((s.user or {}).get("role", "")).lower() == "admin":
+            ctk.CTkButton(controls, text="Review reports", width=130, fg_color=CARD, hover_color=HOVER,
+                          command=lambda: s.review_community_reports(client, token, dialog)).pack(side="right", padx=4)
+        status = ctk.CTkLabel(root, text="Loading discussions…", text_color="#9aa0b5", anchor="w")
+        status.pack(fill="x", padx=14, pady=(4, 6))
+        posts = ctk.CTkScrollableFrame(root, fg_color="transparent")
+        posts.pack(fill="both", expand=True, padx=8, pady=(0, 10))
+        s.load_community_posts(client, token, dialog, posts, status, None)
         dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
 
-    def browse_community_events(s, dialog, items):
-        dialog.destroy()
-        category = items[0][0]
-        s.app.gate.place_forget()
-        s.app.open_cat(category)
-        s.app.items = [item for item_category, item in items if item_category == category]
-        s.app.show_genres()
-        s.app.pick_genre("All")
+    def load_community_posts(s, client, token, dialog, view, status, category):
+        try: status.configure(text="Loading discussions…", text_color="#9aa0b5")
+        except Exception: return
+        def worker():
+            try: result = (True, client.list_community_posts(token, category=category))
+            except Exception as exc: result = (False, str(exc))
+            s.app.uiq.put((s.finish_community_posts, (dialog, view, status, client, token, category, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_community_posts(s, dialog, view, status, client, token, category, ok, data):
+        if not dialog.winfo_exists(): return
+        for child in view.winfo_children(): child.destroy()
+        if not ok:
+            status.configure(text=f"Could not load Community: {data}", text_color="#ff6b6b")
+            return
+        status.configure(text=f"{len(data)} discussion{'s' if len(data) != 1 else ''} · Respectful conversation keeps Spotlight welcoming.",
+                         text_color="#9aa0b5")
+        if not data:
+            ctk.CTkLabel(view, text="No discussions yet. Start the first one.", text_color="#9aa0b5",
+                         font=("Segoe UI", 16)).pack(pady=28)
+            return
+        for post in data:
+            card = ctk.CTkFrame(view, fg_color=CARD, corner_radius=12)
+            card.pack(fill="x", padx=5, pady=5)
+            meta = ctk.CTkFrame(card, fg_color="transparent")
+            meta.pack(fill="x", padx=12, pady=(10, 0))
+            ctk.CTkLabel(meta, text=post["category"].replace("_", " ").title(), text_color=GOLD,
+                         font=("Segoe UI", 11, "bold")).pack(side="left")
+            ctk.CTkLabel(meta, text=f"{post['author']} · {str(post['created_at'])[:16]}",
+                         text_color="#85899a", font=("Segoe UI", 10)).pack(side="right")
+            ctk.CTkLabel(card, text=post["title"], text_color="#e7e9f0",
+                         font=("Segoe UI", 17, "bold"), anchor="w").pack(fill="x", padx=12, pady=(4, 0))
+            excerpt = post["body"] if len(post["body"]) <= 260 else post["body"][:257].rstrip() + "…"
+            ctk.CTkLabel(card, text=excerpt, text_color="#b6bbca", wraplength=820,
+                         justify="left", anchor="w").pack(fill="x", padx=12, pady=(3, 4))
+            actions = ctk.CTkFrame(card, fg_color="transparent")
+            actions.pack(fill="x", padx=8, pady=(0, 8))
+            ctk.CTkButton(actions, text=f"Open discussion · {post['reply_count']} replies", width=190,
+                          height=30, command=lambda item=post: s.open_community_thread(client, token, item)).pack(side="left", padx=3)
+            ctk.CTkButton(actions, text="Report", width=70, height=30, fg_color="transparent", hover_color=HOVER,
+                          command=lambda item=post: s.report_community_content(client, token, "post", item["id"])).pack(side="left", padx=3)
+
+    def create_community_post_dialog(s, client, token, board, category, category_values, posts, status):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("Start a Community discussion")
+        dialog.geometry("600x540")
+        dialog.configure(fg_color=BG)
+        dialog.transient(board)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=16, pady=16)
+        ctk.CTkLabel(panel, text="Start a discussion", font=("Segoe UI", 22, "bold"), text_color=GOLD).pack(anchor="w", padx=14, pady=(12, 6))
+        topic = ctk.StringVar(value="general")
+        ctk.CTkOptionMenu(panel, variable=topic,
+                          values=["general", "events", "music", "movies_tv", "games", "sports", "festivals"],
+                          width=180).pack(anchor="w", padx=14, pady=5)
+        title = ctk.CTkEntry(panel, placeholder_text="Discussion title", width=520)
+        title.pack(padx=14, pady=5)
+        body = ctk.CTkTextbox(panel, width=520, height=250)
+        body.pack(padx=14, pady=5)
+        message = ctk.CTkLabel(panel, text="Keep it friendly. Posts are visible to Spotlight members.",
+                               text_color="#9aa0b5", wraplength=500)
+        message.pack(pady=5)
+        submit = ctk.CTkButton(panel, text="Post discussion", width=180)
+        def send():
+            title_value, body_value = title.get().strip(), body.get("1.0", "end-1c").strip()
+            if len(title_value) < 4 or not body_value:
+                message.configure(text="Add a title (at least 4 characters) and a message.", text_color="#ff6b6b")
+                return
+            submit.configure(state="disabled")
+            message.configure(text="Posting…", text_color=GOLD)
+            topic_value = topic.get()
+            def worker():
+                try: result = (True, client.create_community_post(token, topic_value, title_value, body_value))
+                except Exception as exc: result = (False, str(exc))
+                s.app.uiq.put((s.finish_community_post, (dialog, board, posts, status, client, token,
+                                                          category, submit, message, *result)))
+            threading.Thread(target=worker, daemon=True).start()
+        submit.configure(command=send)
+        submit.pack(pady=8)
+        ctk.CTkButton(panel, text="Cancel", fg_color=CARD, hover_color=HOVER,
+                      command=dialog.destroy).pack(pady=(0, 10))
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+
+    def finish_community_post(s, form, board, posts, status, client, token, category, submit, message, ok, data):
+        if not form.winfo_exists(): return
+        if not ok:
+            submit.configure(state="normal")
+            message.configure(text=f"Could not post: {data}", text_color="#ff6b6b")
+            return
+        form.destroy()
+        current = category.get()
+        s.load_community_posts(client, token, board, posts, status, {"All topics": None, "General": "general",
+            "Events": "events", "Music": "music", "Movies & TV": "movies_tv", "Games": "games",
+            "Sports": "sports", "Festivals": "festivals"}.get(current))
+
+    def open_community_thread(s, client, token, post):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title(post["title"])
+        dialog.geometry("760x680")
+        dialog.minsize(620, 500)
+        dialog.configure(fg_color=BG)
+        dialog.transient(s.app)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=14, pady=14)
+        ctk.CTkLabel(panel, text=post["title"], font=("Segoe UI", 20, "bold"), text_color=GOLD,
+                     wraplength=680, justify="left").pack(anchor="w", padx=12, pady=(10, 3))
+        ctk.CTkLabel(panel, text=f"{post['category'].replace('_', ' ').title()} · {post['author']} · {str(post['created_at'])[:16]}",
+                     text_color="#85899a").pack(anchor="w", padx=12)
+        ctk.CTkLabel(panel, text=post["body"], text_color="#d4d7e1", wraplength=680,
+                     justify="left", anchor="w").pack(fill="x", padx=12, pady=(8, 10))
+        ctk.CTkButton(panel, text="Report discussion", width=150, height=30, fg_color="transparent", hover_color=HOVER,
+                      command=lambda: s.report_community_content(client, token, "post", post["id"])).pack(anchor="w", padx=8, pady=(0, 6))
+        replies = ctk.CTkScrollableFrame(panel, fg_color="transparent")
+        replies.pack(fill="both", expand=True, padx=6, pady=4)
+        reply_box = ctk.CTkTextbox(panel, width=680, height=70)
+        reply_box.pack(fill="x", padx=10, pady=(5, 3))
+        status = ctk.CTkLabel(panel, text="", text_color="#9aa0b5")
+        status.pack(anchor="w", padx=12)
+        send = ctk.CTkButton(panel, text="Reply", width=110,
+                             command=lambda: s.submit_community_reply(client, token, dialog, post, replies,
+                                                                      reply_box, send, status))
+        send.pack(anchor="e", padx=10, pady=(3, 8))
+        s.load_community_replies(client, token, dialog, post, replies, status)
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+
+    def load_community_replies(s, client, token, dialog, post, view, status):
+        def worker():
+            try: result = (True, client.list_community_replies(token, post["id"]))
+            except Exception as exc: result = (False, str(exc))
+            s.app.uiq.put((s.finish_community_replies, (dialog, post, view, status, client, token, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_community_replies(s, dialog, post, view, status, client, token, ok, data):
+        if not dialog.winfo_exists(): return
+        for child in view.winfo_children(): child.destroy()
+        if not ok:
+            status.configure(text=f"Could not load replies: {data}", text_color="#ff6b6b")
+            return
+        if not data:
+            ctk.CTkLabel(view, text="No replies yet.", text_color="#9aa0b5").pack(pady=12)
+        for reply in data:
+            card = ctk.CTkFrame(view, fg_color=CARD, corner_radius=10)
+            card.pack(fill="x", padx=5, pady=4)
+            ctk.CTkLabel(card, text=f"{reply['author']} · {str(reply['created_at'])[:16]}",
+                         text_color=GOLD, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(7, 0))
+            ctk.CTkLabel(card, text=reply["body"], text_color="#cfd3e0", wraplength=640,
+                         justify="left", anchor="w").pack(fill="x", padx=10, pady=4)
+            ctk.CTkButton(card, text="Report reply", width=100, height=26, fg_color="transparent", hover_color=HOVER,
+                          command=lambda item=reply: s.report_community_content(client, token, "reply", item["id"])).pack(anchor="w", padx=6, pady=(0, 4))
+        status.configure(text=f"{len(data)} replies", text_color="#9aa0b5")
+
+    def submit_community_reply(s, client, token, dialog, post, replies, reply_box, button, status):
+        body = reply_box.get("1.0", "end-1c").strip()
+        if not body:
+            status.configure(text="Write a reply first.", text_color="#ff6b6b")
+            return
+        button.configure(state="disabled")
+        status.configure(text="Posting reply…", text_color=GOLD)
+        def worker():
+            try: result = (True, client.create_community_reply(token, post["id"], body))
+            except Exception as exc: result = (False, str(exc))
+            s.app.uiq.put((s.finish_community_reply, (dialog, post, replies, reply_box, button, status, client, token, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_community_reply(s, dialog, post, replies, reply_box, button, status, client, token, ok, data):
+        if not dialog.winfo_exists(): return
+        button.configure(state="normal")
+        if not ok:
+            status.configure(text=f"Could not post reply: {data}", text_color="#ff6b6b")
+            return
+        reply_box.delete("1.0", "end")
+        status.configure(text="Reply posted.", text_color="#77d18b")
+        s.load_community_replies(client, token, dialog, post, replies, status)
+
+    def report_community_content(s, client, token, target_type, target_id):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("Report Community content")
+        dialog.geometry("470x270")
+        dialog.configure(fg_color=BG)
+        dialog.transient(s.app)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=14, pady=14)
+        ctk.CTkLabel(panel, text="Report this content", font=("Segoe UI", 19, "bold"), text_color=GOLD).pack(pady=(12, 6))
+        reason = ctk.CTkEntry(panel, placeholder_text="Briefly tell moderators why", width=390)
+        reason.pack(pady=8)
+        status = ctk.CTkLabel(panel, text="", text_color="#9aa0b5", wraplength=390)
+        status.pack(pady=5)
+        send = ctk.CTkButton(panel, text="Send report", width=150)
+        def submit():
+            text = reason.get().strip()
+            if len(text) < 5:
+                status.configure(text="Please add a short reason (at least 5 characters).", text_color="#ff6b6b")
+                return
+            send.configure(state="disabled")
+            status.configure(text="Sending report…", text_color=GOLD)
+            def worker():
+                try: result = (True, client.report_community_content(token, target_type, target_id, text).get("message", "Report sent."))
+                except Exception as exc: result = (False, str(exc))
+                s.app.uiq.put((s.finish_community_report, (dialog, send, status, *result)))
+            threading.Thread(target=worker, daemon=True).start()
+        send.configure(command=submit)
+        send.pack(pady=5)
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+
+    def finish_community_report(s, dialog, button, status, ok, message):
+        if not dialog.winfo_exists(): return
+        status.configure(text=message, text_color="#77d18b" if ok else "#ff6b6b")
+        if ok: button.configure(text="Sent", state="disabled")
+        else: button.configure(state="normal")
+
+    def review_community_reports(s, client, token, board):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("Community reports for review")
+        dialog.geometry("760x620")
+        dialog.configure(fg_color=BG)
+        dialog.transient(board)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=14, pady=14)
+        ctk.CTkLabel(panel, text="Moderator review", font=("Segoe UI", 22, "bold"), text_color=GOLD).pack(anchor="w", padx=12, pady=(10, 4))
+        status = ctk.CTkLabel(panel, text="Loading reports…", text_color="#9aa0b5", anchor="w")
+        status.pack(fill="x", padx=12)
+        view = ctk.CTkScrollableFrame(panel, fg_color="transparent")
+        view.pack(fill="both", expand=True, padx=6, pady=6)
+        def worker():
+            try: result = (True, client.list_community_reports(token))
+            except Exception as exc: result = (False, str(exc))
+            s.app.uiq.put((s.finish_community_reports, (dialog, view, status, client, token, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_community_reports(s, dialog, view, status, client, token, ok, reports):
+        if not dialog.winfo_exists(): return
+        for child in view.winfo_children(): child.destroy()
+        if not ok:
+            status.configure(text=f"Could not load reports: {reports}", text_color="#ff6b6b")
+            return
+        status.configure(text=f"{len(reports)} pending report{'s' if len(reports) != 1 else ''}", text_color="#9aa0b5")
+        if not reports:
+            ctk.CTkLabel(view, text="No reports need review.", text_color="#9aa0b5").pack(pady=24)
+        for report in reports:
+            card = ctk.CTkFrame(view, fg_color=CARD, corner_radius=10)
+            card.pack(fill="x", padx=5, pady=5)
+            content = report.get("content", {})
+            ctk.CTkLabel(card, text=f"{report['target_type'].title()} · reported by {report['reporter']}",
+                         text_color=GOLD, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(8, 0))
+            ctk.CTkLabel(card, text=content.get("title", content.get("body", "")), text_color="#d4d7e1",
+                         wraplength=640, justify="left", anchor="w").pack(fill="x", padx=10, pady=4)
+            ctk.CTkLabel(card, text=f"Report: {report['reason']}", text_color="#9aa0b5",
+                         wraplength=640, justify="left", anchor="w").pack(fill="x", padx=10, pady=2)
+            actions = ctk.CTkFrame(card, fg_color="transparent")
+            actions.pack(anchor="e", padx=8, pady=(2, 8))
+            for action, label in (("dismiss", "Dismiss"), ("hide", "Hide content")):
+                ctk.CTkButton(actions, text=label, width=120,
+                              fg_color=CARD if action == "dismiss" else "#812f39",
+                              command=lambda item=report, choice=action: s.moderate_community_report(
+                                  client, token, dialog, view, status, item, choice)).pack(side="left", padx=3)
+
+    def moderate_community_report(s, client, token, dialog, view, status, report, action):
+        status.configure(text="Saving moderator decision…", text_color=GOLD)
+        def worker():
+            try: result = (True, client.moderate_community_report(token, report["id"], action).get("status", "reviewed"))
+            except Exception as exc: result = (False, str(exc))
+            s.app.uiq.put((s.finish_community_moderation, (dialog, view, status, client, token, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_community_moderation(s, dialog, view, status, client, token, ok, message):
+        if not dialog.winfo_exists(): return
+        if not ok:
+            status.configure(text=f"Could not save review: {message}", text_color="#ff6b6b")
+            return
+        def worker():
+            try: result = (True, client.list_community_reports(token))
+            except Exception as exc: result = (False, str(exc))
+            s.app.uiq.put((s.finish_community_reports, (dialog, view, status, client, token, *result)))
+        status.configure(text="Review saved.", text_color="#77d18b")
+        threading.Thread(target=worker, daemon=True).start()
 
     def sign_out(s):
         if s.auto_refresh_after_id is not None:
