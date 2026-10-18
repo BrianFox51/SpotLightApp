@@ -62,6 +62,15 @@ def init_db():
     event_columns = {row[1] for row in cursor.execute("PRAGMA table_info(local_events)").fetchall()}
     if "area_scope" not in event_columns:
         cursor.execute("ALTER TABLE local_events ADD COLUMN area_scope TEXT NOT NULL DEFAULT ''")
+
+    # Guest cache membership is separate from shared catalog rows. Legacy
+    # cards remain available to registered profiles but are hidden from Guest.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS guest_catalog_items (
+            media_id TEXT PRIMARY KEY,
+            created INTEGER NOT NULL
+        )
+    """)
     
     # 4. Users (sign-up / sign-in; passwords are salted + hashed, never stored as text)
     cursor.execute("""
@@ -95,7 +104,7 @@ init_db()
 print("Vault Database successfully created and initialized!")
 
 
-def save_media_item(cat, item, cast_list=None, event_list=None):
+def save_media_item(cat, item, cast_list=None, event_list=None, *, guest_cache=False):
     """Atomically commits a media asset alongside its local events and cast directory."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -118,6 +127,9 @@ def save_media_item(cat, item, cast_list=None, event_list=None):
             sources=excluded.sources, first_shown=excluded.first_shown, recent_shown=excluded.recent_shown, last_updated=excluded.last_updated
     """, (media_id, cat, item['title'], item['sub'], item['year'], item['url'], item['score'], 
           item['desc'], current_notes, json.dumps(item.get('srcs', [])), item.get('first_shown', ''), item.get('recent_shown', ''), now))
+
+    if guest_cache:
+        cursor.execute("INSERT OR IGNORE INTO guest_catalog_items (media_id, created) VALUES (?, ?)", (media_id, now))
     
     # Check if there is cast or crew data to save
     if cast_list:
@@ -145,7 +157,7 @@ def save_media_item(cat, item, cast_list=None, event_list=None):
     conn.commit()
     conn.close()
 
-def save_media_items(rows):
+def save_media_items(rows, *, guest_cache=False):
     """Write a catalog batch in one SQLite transaction to keep refresh responsive."""
     if not rows: return
     conn = sqlite3.connect(DB_PATH)
@@ -162,6 +174,8 @@ def save_media_items(rows):
                 recent_shown=excluded.recent_shown, last_updated=excluded.last_updated""",
                 (media_id, cat, item["title"], item["sub"], item["year"], item["url"], item["score"], item["desc"],
                  notes, json.dumps(item.get("srcs", [])), item.get("first_shown", ""), item.get("recent_shown", ""), int(time.time())))
+            if guest_cache:
+                conn.execute("INSERT OR IGNORE INTO guest_catalog_items (media_id, created) VALUES (?, ?)", (media_id, int(time.time())))
         conn.commit()
     finally:
         conn.close()
@@ -196,6 +210,18 @@ def load_local_catalog(cat):
     items = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return items
+
+def load_guest_catalog(cat):
+    """Load only cards fetched into the persistent Guest cache."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("""SELECT m.* FROM media_items m
+            JOIN guest_catalog_items g ON g.media_id = m.id
+            WHERE m.category = ? ORDER BY m.score DESC""", (cat,))
+        return [dict(row) for row in rows.fetchall()]
+    finally:
+        conn.close()
 
 def load_catalog_filter_data(username, media_ids):
     """Load favorite IDs and event locations for a category with batched database reads."""
@@ -320,19 +346,33 @@ def get_user(username):
         return dict(row) if row else None
     finally: conn.close()
 
-def dashboard_stats(city="", state="", username="__guest__"):
+def dashboard_stats(city="", state="", username="__guest__", *, guest_only=False):
     """Counts for the dashboard, including this user's saved favorites."""
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    cats = dict(c.execute("SELECT category, COUNT(*) FROM media_items GROUP BY category").fetchall())
+    if guest_only:
+        cats = dict(c.execute("""SELECT m.category, COUNT(*) FROM media_items m
+            JOIN guest_catalog_items g ON g.media_id = m.id GROUP BY m.category""").fetchall())
+    else:
+        cats = dict(c.execute("SELECT category, COUNT(*) FROM media_items GROUP BY category").fetchall())
     # Keep the headline total aligned with the six category counts shown below it.
     displayed_categories = ("music", "movies", "tv", "games", "sports", "festivals")
     total = sum(cats.get(category, 0) for category in displayed_categories)
     def near(term):
         if not term: return 0
+        if guest_only:
+            return c.execute("""SELECT COUNT(DISTINCT e.media_id) FROM local_events e
+                JOIN guest_catalog_items g ON g.media_id = e.media_id
+                WHERE e.location_details LIKE ?""", (f"%{term}%",)).fetchone()[0]
         return c.execute("SELECT COUNT(DISTINCT media_id) FROM local_events WHERE location_details LIKE ?", (f"%{term}%",)).fetchone()[0]
-    out = {"cats": cats, "total": total, "events": c.execute("SELECT COUNT(*) FROM local_events").fetchone()[0],
+    events_count = (c.execute("""SELECT COUNT(*) FROM local_events e
+        JOIN guest_catalog_items g ON g.media_id = e.media_id""").fetchone()[0] if guest_only
+        else c.execute("SELECT COUNT(*) FROM local_events").fetchone()[0])
+    favorites_count = (0 if guest_only else c.execute(
+        "SELECT COUNT(*) FROM favorites WHERE username = ?", (username or "__guest__",)
+    ).fetchone()[0])
+    out = {"cats": cats, "total": total, "events": events_count,
            "near_city": near(city), "near_state": near(f", {state}" if state else ""),
-           "favorites": c.execute("SELECT COUNT(*) FROM favorites WHERE username = ?", (username or "__guest__",)).fetchone()[0]}
+           "favorites": favorites_count}
     conn.close(); return out
 
 
@@ -401,7 +441,8 @@ def set_favorite(username, item_id, favorite):
 
 def delete_item(mid):
     conn = sqlite3.connect(DB_PATH)
-    for t in ("media_items", "local_events", "cast_crew_directory"): conn.execute(f"DELETE FROM {t} WHERE " + ("id" if t == "media_items" else "media_id") + " = ?", (mid,))
+    for t in ("media_items", "local_events", "cast_crew_directory", "guest_catalog_items"):
+        conn.execute(f"DELETE FROM {t} WHERE " + ("id" if t == "media_items" else "media_id") + " = ?", (mid,))
     conn.execute("DELETE FROM favorites WHERE media_id = ?", (mid,))
     conn.commit(); conn.close()
 
@@ -443,7 +484,8 @@ def _delete_catalog_rows(conn, media_ids):
     for offset in range(0, len(media_ids), 500):
         batch = media_ids[offset:offset + 500]
         marks = ",".join("?" for _ in batch)
-        for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"), ("media_items", "id")):
+        for table, column in (("local_events", "media_id"), ("cast_crew_directory", "media_id"),
+                              ("guest_catalog_items", "media_id"), ("media_items", "id")):
             conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", batch)
 
 def prune_source(source, keep_ids):
@@ -454,7 +496,8 @@ def prune_source(source, keep_ids):
     try:
         keep = set(keep_ids)
         rows = conn.execute("SELECT id, sources FROM media_items WHERE sources LIKE ?", (f'%"{source}"%',)).fetchall()
-        candidates = [row for row in rows if row[0] not in keep]
+        guest_ids = {row[0] for row in conn.execute("SELECT media_id FROM guest_catalog_items")}
+        candidates = [row for row in rows if row[0] not in keep and row[0] not in guest_ids]
         gone = _prunable_provider_ids(conn, candidates, source)
         _delete_catalog_rows(conn, gone)
         conn.commit()
@@ -472,9 +515,48 @@ def prune_category_source(category, source, keep_ids):
         keep = set(keep_ids)
         rows = conn.execute("SELECT id, sources FROM media_items WHERE category = ? AND sources LIKE ?",
                             (category, f'%"{source}"%')).fetchall()
-        candidates = [row for row in rows if row[0] not in keep]
+        guest_ids = {row[0] for row in conn.execute("SELECT media_id FROM guest_catalog_items")}
+        candidates = [row for row in rows if row[0] not in keep and row[0] not in guest_ids]
         gone = _prunable_provider_ids(conn, candidates, source)
         _delete_catalog_rows(conn, gone)
+        conn.commit()
+        return len(gone)
+    finally:
+        conn.close()
+
+def prune_guest_category_source(category, source, keep_ids):
+    """Remove stale Guest visibility without deleting cards used by members."""
+    if not keep_ids:
+        return 0
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        keep = set(keep_ids)
+        rows = conn.execute("""SELECT m.id, m.sources FROM media_items m
+            JOIN guest_catalog_items g ON g.media_id = m.id
+            WHERE m.category = ? AND m.sources LIKE ?""", (category, f'%"{source}"%')).fetchall()
+        candidates = [row for row in rows if row[0] not in keep]
+        gone = _prunable_provider_ids(conn, candidates, source)
+        if gone:
+            conn.executemany("DELETE FROM guest_catalog_items WHERE media_id = ?", ((mid,) for mid in gone))
+        conn.commit()
+        return len(gone)
+    finally:
+        conn.close()
+
+def prune_guest_source(source, keep_ids):
+    """Remove stale Guest visibility while retaining shared/member catalog rows."""
+    if not keep_ids:
+        return 0
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        keep = set(keep_ids)
+        rows = conn.execute("""SELECT m.id, m.sources FROM media_items m
+            JOIN guest_catalog_items g ON g.media_id = m.id
+            WHERE m.sources LIKE ?""", (f'%"{source}"%',)).fetchall()
+        candidates = [row for row in rows if row[0] not in keep]
+        gone = _prunable_provider_ids(conn, candidates, source)
+        if gone:
+            conn.executemany("DELETE FROM guest_catalog_items WHERE media_id = ?", ((mid,) for mid in gone))
         conn.commit()
         return len(gone)
     finally:
@@ -489,7 +571,8 @@ def prune_expired_watchmode(cutoff):
             "SELECT id, sources FROM media_items WHERE category IN ('streaming', 'movies', 'tv') AND sources LIKE ? AND last_updated < ?",
             ('%"Watchmode"%', cutoff)
         ).fetchall()
-        gone = _prunable_provider_ids(conn, rows, "Watchmode")
+        guest_ids = {row[0] for row in conn.execute("SELECT media_id FROM guest_catalog_items")}
+        gone = _prunable_provider_ids(conn, [row for row in rows if row[0] not in guest_ids], "Watchmode")
         _delete_catalog_rows(conn, gone)
         conn.commit()
         return len(gone)

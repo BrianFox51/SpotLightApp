@@ -737,7 +737,8 @@ class Gate(ctk.CTkFrame):
             s.app.search_area_scope = f"local:{float(guest_location['latitude']):.2f},{float(guest_location['longitude']):.2f}"
         else:
             s.app.search_area_scope = "local:unknown"
-        st = database.dashboard_stats(city, selected_state or state, account_key); c = st["cats"]
+        is_guest = not bool(u.get("username"))
+        st = database.dashboard_stats(city, selected_state or state, account_key, guest_only=is_guest); c = st["cats"]
         for category in ("music", "sports", "festivals"):
             c[category] = len(s.app.load_catalog_items(category))
         st["total"] = sum(c.get(category, 0) for category in ("music", "movies", "tv", "games", "sports", "festivals"))
@@ -1028,7 +1029,8 @@ class Gate(ctk.CTkFrame):
         u = s.user or {"city": "", "state": ""}
         city, state = u.get("city") or "", u.get("state") or ""
         selected_state = getattr(s.app, "search_area_state", None) or state
-        st = database.dashboard_stats(city, selected_state, u.get("username") or "__guest__")
+        st = database.dashboard_stats(city, selected_state, u.get("username") or "__guest__",
+                                      guest_only=not bool(u.get("username")))
         cats = st["cats"]
         for category in ("music", "sports", "festivals"):
             cats[category] = len(s.app.load_catalog_items(category))
@@ -1231,4 +1233,6 @@ class Gate(ctk.CTkFrame):
             except Exception: pass
             s.auto_refresh_after_id = None
         s.auto_refresh_started = False
-        s.user = None; s.show_login()
+        s.user = None
+        s.app.reset_session_view()
+        s.show_login()

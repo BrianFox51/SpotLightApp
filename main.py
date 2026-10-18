@@ -724,7 +724,8 @@ class App(ctk.CTk):
         return end_date is None or end_date >= datetime.date.today() or database.is_favorite(self.favorite_user_key(), g(item, "id"))
     def load_catalog_items(self, category):
         """Load visible cached cards, filtering event cards to the selected search area."""
-        items = database.load_local_catalog(category)
+        items = (database.load_guest_catalog(category) if self.is_guest_session()
+                 else database.load_local_catalog(category))
         event_rows_by_id = {}
         if category in UNIT and items:
             favorite_ids, event_rows_by_id = database.load_catalog_filter_data(
@@ -764,6 +765,10 @@ class App(ctk.CTk):
             elif scope in scopes:
                 visible.append(item)
         return visible
+    def is_guest_session(self):
+        """Return whether the active local app session has no registered account."""
+        user = getattr(getattr(self, "gate", None), "user", None) or {}
+        return not bool(user.get("username"))
     def event_order(self, item):
         """Order live events by date, then verified user submissions by submission time."""
         date = event_end_date(item)
@@ -886,6 +891,28 @@ class App(ctk.CTk):
     def home(self):
         self.open_cat("music"); self.hide_panel(); self.mark_nav(None)
         self.hero.play(os.path.join(MEDIA, "ambient", "music.mp4"), "music", ACC["music"], None, ("DISCOVER", "Hover a category to explore what's happening near you"), dim=0.65)
+    def reset_session_view(self):
+        """Clear the active selection and return to Discover before another account signs in."""
+        if getattr(self, "search_job", None):
+            try: self.after_cancel(self.search_job)
+            except Exception: pass
+        self.search_job = None
+        if getattr(self, "search_entry", None) is not None:
+            try: self.search_entry.delete(0, "end")
+            except Exception: pass
+        self.search_query = ""
+        self.search_results = []
+        self.search_active = False
+        self.favorites_active = False
+        self.sel = None
+        self.sel_cat = None
+        self.pinned = False
+        self.close_bio()
+        self.close_promote()
+        self.home()
+        self.hide_favorites_button()
+        try: self.after_idle(lambda: self.insp._parent_canvas.yview_moveto(0))
+        except Exception: pass
     def poll_ui(self):
         try:
             while True: fn, a = self.uiq.get_nowait(); fn(*a)
@@ -1546,8 +1573,9 @@ class App(ctk.CTk):
         if not community.feed_url():
             if say: say("Community feed isn't set up yet (set community_feed_url).")
             return
+        guest_cache = self.is_guest_session()
         def work():
-            try: res = community.sync(self.poster_dir())
+            try: res = community.sync(self.poster_dir(), guest_cache=guest_cache)
             except Exception as e: return self.uiq.put((say or (lambda s: None), (f"Community feed unavailable: {e}",)))
             self.uiq.put((self.apply_community, (res, say)))
         threading.Thread(target=work, daemon=True).start()
@@ -1606,7 +1634,8 @@ class App(ctk.CTk):
                     area_scope = f"local:{float(latitude):.2f},{float(longitude):.2f}"
                 res = events.sync(key, latitude, longitude, POSTERS,
                                   lambda message: self.uiq.put((say, (message,))), radius=100,
-                                  state_code=state_code or None, area_scope=area_scope)
+                                  state_code=state_code or None, area_scope=area_scope,
+                                  guest_cache=guest)
             except urllib.error.HTTPError as e:
                 msg = "Ticketmaster rejected the key. Check the saved credential." if e.code in (401, 403) else f"Ticketmaster request failed (HTTP {e.code})."
                 if status_callback: status_callback("ticketmaster_key", "bad", msg)
@@ -1678,7 +1707,8 @@ class App(ctk.CTk):
 
     def apply_tvmaze(self, shows, say=None):
         """Merge TVmaze airings into matching TV titles and create cards for guide-only shows."""
-        existing = {g(item, "title").casefold(): item for item in database.load_local_catalog("tv")
+        guest_cache = self.is_guest_session()
+        existing = {g(item, "title").casefold(): item for item in self.load_catalog_items("tv")
                     if not self.is_watchmode_item(item, "tv")}
         rows, keep_ids, now = [], [], int(time.time())
         for show in shows:
@@ -1700,8 +1730,11 @@ class App(ctk.CTk):
                 keep_ids.append(database.media_id("tv", title, "TV Guide"))
             elif g(match, "sub") == "TV Guide":
                 keep_ids.append(g(match, "id"))
-        database.save_media_items(rows)
-        database.prune_category_source("tv", "TVmaze", keep_ids)
+        database.save_media_items(rows, guest_cache=guest_cache)
+        if guest_cache:
+            database.prune_guest_category_source("tv", "TVmaze", keep_ids)
+        else:
+            database.prune_category_source("tv", "TVmaze", keep_ids)
         self.meta.save()
         dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
         message = f"TV guide refreshed: {len(shows)} shows with channel and airtime details for the next 7 days."
@@ -1845,7 +1878,7 @@ class App(ctk.CTk):
         genres_index = {int(row["id"]): row.get("name", "") for row in catalogs.get("genres", []) if row.get("id") is not None}
         platforms_index = {int(row["id"]): row.get("name") or row.get("abbreviation", "") for row in catalogs.get("platforms", []) if row.get("id") is not None}
         counts = {"popular": 0, "upcoming": 0}; media_rows = []
-        existing_games = {g(item, "title").casefold(): item for item in database.load_local_catalog("games")}
+        existing_games = {g(item, "title").casefold(): item for item in self.load_catalog_items("games")}
         for entry in merged.values():
             result = entry["result"]; title = str(result.get("name") or "").strip()
             release_ts = result.get("first_release_date")
@@ -1876,14 +1909,14 @@ class App(ctk.CTk):
                 metadata["igdb_video_id"] = videos[0]["video_id"]
             counts["popular"] += int(entry["popular"]); counts["upcoming"] += int(entry["upcoming"])
             for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
-        database.save_media_items(media_rows)
+        database.save_media_items(media_rows, guest_cache=self.is_guest_session())
         self.meta.save()
         total = len(merged)
         message = f"IGDB refreshed: {counts['popular']} popular and {counts['upcoming']} upcoming games; {total} unique titles with genre and platform data."
         if say: say(message)
         dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
         if self.cat == "games" and self.sel is None and not dashboard_visible:
-            self.items = list(database.load_local_catalog("games")); self.show_genres()
+            self.items = self.load_catalog_items("games"); self.show_genres()
         elif self.sel is not None and self.sel_cat == "games":
             self.render_detail(self.sel)
         self.publish_dashboard_update(message)
@@ -1915,19 +1948,19 @@ class App(ctk.CTk):
                 meta.update({"watchmode_genre": genre, "watchmode_genres": genres, "watchmode_id": watch_id, "watchmode_catalog": True,
                              "watchmode_type": result.get("type") or ("Movie" if cat == "movies" else "TV Series"), "watchmode_catalog_at": now})
                 for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
-        database.save_media_items(media_rows)
+        database.save_media_items(media_rows, guest_cache=self.is_guest_session())
         for key in [key for key in self.meta.d if key.startswith("streaming|")]: self.meta.d.pop(key, None)
         self.meta.save()
         message = f"Watchmode refreshed: {totals.get('movies', 0)} movies and {totals.get('tv', 0)} TV series listed. Older cached entries expire after 30 days."
         if say: say(message)
         dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
         if self.cat in {"movies", "tv"} and self.sel is None and not dashboard_visible:
-            self.items = list(database.load_local_catalog(self.cat)); self.show_genres()
+            self.items = self.load_catalog_items(self.cat); self.show_genres()
         self.publish_dashboard_update(message)
     def apply_tmdb(self, catalogs, say=None):
         now = int(time.time()); added = {"movies": 0, "tv": 0}; updated = {"movies": 0, "tv": 0}; media_rows = []
         for cat in ("movies", "tv"):
-            existing = {g(item, "title").casefold(): item for item in database.load_local_catalog(cat) if not self.is_watchmode_item(item, cat)}
+            existing = {g(item, "title").casefold(): item for item in self.load_catalog_items(cat) if not self.is_watchmode_item(item, cat)}
             for result in catalogs.get(cat, []):
                 title = result["title"]
                 old = existing.get(title.casefold())
@@ -1943,9 +1976,9 @@ class App(ctk.CTk):
                 metadata = self.meta.d.setdefault(f"{cat}|{title}", {})
                 metadata.update({"genre": result["genre"], "tmdb_id": result["id"], "tmdb_url": result["url"], "tmdb_catalog": True, "tmdb_catalog_updated": now})
                 for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
-        database.save_media_items(media_rows)
+        database.save_media_items(media_rows, guest_cache=self.is_guest_session())
         self.meta.save()
-        movie_total = len(database.load_local_catalog("movies")); tv_total = len(database.load_local_catalog("tv"))
+        movie_total = len(self.load_catalog_items("movies")); tv_total = len(self.load_catalog_items("tv"))
         details = f"TMDB updated: {added['movies']} new movies, {updated['movies']} refreshed; {added['tv']} new TV shows, {updated['tv']} refreshed."
         if say: say(f"{details} Current catalog totals: {movie_total} movies, {tv_total} TV shows.")
         self.publish_dashboard_update(f"{details} Full cast, trailers, and extended details load when you open a title.")

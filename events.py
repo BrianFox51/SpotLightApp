@@ -254,7 +254,7 @@ def _events(key, lat=None, lng=None, radius=75, state_code=None, **params):
     return [_parse(event) for event in found]
 
 
-def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=None, area_scope=None):
+def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=None, area_scope=None, guest_cache=False):
     """Save nearby or statewide events and matching tour dates to the catalog.
 
     Supply ``state_code`` for a state-wide U.S. search. Otherwise, event
@@ -277,7 +277,7 @@ def sync(key, lat, lng, poster_dir, say=lambda s: None, radius=75, state_code=No
         database.save_media_item(cat, item, [], [{
             "venue": ev["venue"], "time": ev["label"], "location": ev["where"],
             "purchase_url": ev["url"], "area_scope": area_scope,
-        }])
+        }], guest_cache=guest_cache)
         meta[(cat, ev["name"])] = {"genre": genre, "online_v3": True, "buy_url": ev["url"], "buy_label": "Ticketmaster" + (f" · {ev['price']}" if ev["price"] else ""), **extra_meta}
         p = os.path.join(poster_dir, _slug(ev["name"]) + ".jpg")
         if ev["img"] and not os.path.exists(p) and not os.path.exists(p[:-4] + ".png"):

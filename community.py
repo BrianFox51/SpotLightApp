@@ -78,14 +78,14 @@ def _grab(url, path):
     im = Image.open(io.BytesIO(data)); im.verify(); Image.open(io.BytesIO(data)).convert("RGB").save(path, "JPEG", quality=88)
 
 
-def save_events(evs, poster_dir, source="Community"):
+def save_events(evs, poster_dir, source="Community", *, guest_cache=False):
     """Writes events into the library. Returns {(category, title): meta}."""
     meta, today = {}, datetime.date.today()
     for e in evs:
         days = (_date(e["date"]) - today).days; where = f"{e['city']}, {e['state']}"; loc = f"{e['address']}, {where}" if e.get("address") else where
         item = {"title": e["title"], "sub": e["venue"], "year": e["date"][:4], "url": e["ticket_url"], "score": float(max(1, 100 - max(days, 0))), "desc": e["description"][:200],
                 "first_shown": "Community listing", "recent_shown": "Next: " + label(e), "srcs": [source]}
-        database.save_media_item(e["category"], item, [], [{"venue": e["venue"], "time": label(e), "location": loc, "purchase_url": e["ticket_url"]}])
+        database.save_media_item(e["category"], item, [], [{"venue": e["venue"], "time": label(e), "location": loc, "purchase_url": e["ticket_url"]}], guest_cache=guest_cache)
         meta[(e["category"], e["title"])] = {"genre": e["type"], "online_v3": True, "community": True,
                                               "user_submission": bool(e.get("submitted_at")), "submitted_at": e.get("submitted_at", ""),
                                               "about": e["description"] + (f"\n\nListed by {e['organizer']}" if e.get("organizer") else ""),
@@ -108,14 +108,16 @@ def parse_feed(raw):
     return out, ids
 
 
-def sync(poster_dir):
+def sync(poster_dir, *, guest_cache=False):
     """Downloads the community feed and updates the library. None if no feed is configured."""
     url = feed_url()
     if not url: return None
     with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "SpotlightApp/1.0"}), timeout=15) as r: raw = r.read(1_000_001)
     if len(raw) > 1_000_000: raise ValueError("feed is larger than 1 MB")
-    evs, ids = parse_feed(raw.decode("utf-8", "replace")); meta = save_events(evs, poster_dir)
-    gone = database.prune_source("Community", [database.media_id(e["category"], e["title"], e["venue"]) for e in evs])
+    evs, ids = parse_feed(raw.decode("utf-8", "replace")); meta = save_events(evs, poster_dir, guest_cache=guest_cache)
+    keep_ids = [database.media_id(e["category"], e["title"], e["venue"]) for e in evs]
+    gone = (database.prune_guest_source("Community", keep_ids) if guest_cache
+            else database.prune_source("Community", keep_ids))
     with open(CACHE, "w", encoding="utf-8") as f: json.dump({"ids": ids, "count": len(evs)}, f)
     return {"count": len(evs), "meta": meta, "pruned": gone}
 
