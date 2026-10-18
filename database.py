@@ -197,6 +197,32 @@ def load_local_catalog(cat):
     conn.close()
     return items
 
+def load_catalog_filter_data(username, media_ids):
+    """Load favorite IDs and event locations for a category with batched database reads."""
+    ids = list(dict.fromkeys(str(media_id) for media_id in media_ids if media_id))
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        favorite_ids = {row[0] for row in conn.execute(
+            "SELECT media_id FROM favorites WHERE username = ?",
+            (username or "__guest__",),
+        )}
+        events_by_media_id = {}
+        for offset in range(0, len(ids), 800):
+            batch = ids[offset:offset + 800]
+            marks = ",".join("?" for _ in batch)
+            rows = conn.execute(
+                f"SELECT media_id, area_scope, location_details FROM local_events WHERE media_id IN ({marks})",
+                batch,
+            )
+            for media_id, area_scope, location_details in rows:
+                events_by_media_id.setdefault(media_id, []).append({
+                    "area_scope": area_scope,
+                    "location_details": location_details,
+                })
+        return favorite_ids, events_by_media_id
+    finally:
+        conn.close()
+
 def load_details(media_id):
     """Extract biography and event rows, including each event's cached search area."""
     conn = sqlite3.connect(DB_PATH)

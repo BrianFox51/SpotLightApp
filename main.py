@@ -724,7 +724,19 @@ class App(ctk.CTk):
         return end_date is None or end_date >= datetime.date.today() or database.is_favorite(self.favorite_user_key(), g(item, "id"))
     def load_catalog_items(self, category):
         """Load visible cached cards, filtering event cards to the selected search area."""
-        items = [item for item in database.load_local_catalog(category) if self.event_is_visible(item, category)]
+        items = database.load_local_catalog(category)
+        event_rows_by_id = {}
+        if category in UNIT and items:
+            favorite_ids, event_rows_by_id = database.load_catalog_filter_data(
+                self.favorite_user_key(), (item.get("id") for item in items)
+            )
+            today = datetime.date.today()
+            visible_items = []
+            for item in items:
+                end_date = event_end_date(item)
+                if end_date is None or end_date >= today or g(item, "id") in favorite_ids:
+                    visible_items.append(item)
+            items = visible_items
         if category not in {"music", "sports", "festivals"}:
             return items
         scope = getattr(self, "search_area_scope", "")
@@ -732,7 +744,7 @@ class App(ctk.CTk):
             return items
         visible = []
         for item in items:
-            _cast, rows = database.load_details(item.get("id"))
+            rows = event_rows_by_id.get(item.get("id"), [])
             scopes = {str(row.get("area_scope") or "") for row in rows}
             scopes.discard("")
             if not rows or not scopes:
