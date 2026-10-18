@@ -79,6 +79,30 @@ def lookup_zip(z):
         return "", "", None, None
 
 
+def saved_avatar_path(username):
+    """Return the per-device profile photo path for an account, if one was saved."""
+    paths = events.load_cfg().get("profile_avatar_paths", {})
+    return paths.get(str(username or "").strip().lower(), "") if isinstance(paths, dict) else ""
+
+
+def save_avatar_path(username, path):
+    """Persist a profile photo path locally; image files are never uploaded."""
+    cfg = events.load_cfg()
+    paths = cfg.setdefault("profile_avatar_paths", {})
+    if not isinstance(paths, dict):
+        paths = cfg["profile_avatar_paths"] = {}
+    key = str(username or "").strip().lower()
+    if path:
+        paths[key] = path
+    else:
+        paths.pop(key, None)
+    try:
+        events.save_cfg(cfg)
+        return True
+    except OSError:
+        return False
+
+
 class Gate(ctk.CTkFrame):
     def __init__(s, app, base):
         super().__init__(app, fg_color=BG, corner_radius=0)
@@ -457,7 +481,7 @@ class Gate(ctk.CTkFrame):
         ).pack(anchor="w", padx=12, pady=(4, 2))
         ctk.CTkLabel(
             form,
-            text="Required for your account and local event discovery. Your profile stays on this PC.",
+            text="Online accounts save profile details to the private Spotlight server. Local profiles stay on this PC.",
             text_color="#9aa0b5", wraplength=500, justify="left",
         ).pack(anchor="w", padx=12, pady=(0, 7))
 
@@ -465,10 +489,10 @@ class Gate(ctk.CTkFrame):
         full_name.pack(pady=4)
         u2 = ctk.CTkEntry(form, placeholder_text="Username (3+ characters)", width=500)
         u2.pack(pady=4)
-        p2 = ctk.CTkEntry(form, placeholder_text="Password (6+ characters)", show="•", width=500)
+        p2 = ctk.CTkEntry(form, placeholder_text="Password (12+ online; 6+ local)", show="•", width=500)
         p2.pack(pady=4)
         email = ctk.CTkEntry(
-            form, placeholder_text="Email address (required for local account recovery)",
+            form, placeholder_text="Email address",
             width=500,
         )
         email.pack(pady=4)
@@ -503,26 +527,36 @@ class Gate(ctk.CTkFrame):
 
         avatar = {"path": ""}
         avatar_status = ctk.CTkLabel(
-            form, text="No profile photo selected", text_color="#9aa0b5"
+            form, text="No profile photo selected (photos stay on this PC)", text_color="#9aa0b5"
         )
         avatar_status.pack(anchor="w", padx=14, pady=(5, 0))
         ctk.CTkButton(
             form, text="Choose profile photo", width=180,
             command=lambda: s.choose_avatar(avatar, avatar_status),
         ).pack(anchor="w", padx=12, pady=(3, 6))
-        ctk.CTkButton(
-            form, text="Create Profile", width=300, height=40,
-            command=lambda: s.do_signup(
-                u2.get(), p2.get(), z2.get(),
-                full_name=full_name.get(),
-                state=state_entry.get(),
-                email=email.get(),
-                bio=bio.get("1.0", "end-1c"),
-                interests=interests.get(),
-                website=website.get(),
-                avatar_path=avatar["path"],
+        def submit_signup(online):
+            s.do_signup(
+                u2.get(), p2.get(), z2.get(), online=online,
+                full_name=full_name.get(), state=state_entry.get(), email=email.get(),
+                bio=bio.get("1.0", "end-1c"), interests=interests.get(),
+                website=website.get(), avatar_path=avatar["path"],
+            )
+
+        signup_buttons = ctk.CTkFrame(form, fg_color="transparent")
+        signup_buttons.pack(pady=8)
+        s.signup_buttons = [
+            ctk.CTkButton(
+                signup_buttons, text="Create online account", width=230, height=40,
+                command=lambda: submit_signup(True),
             ),
-        ).pack(pady=8)
+            ctk.CTkButton(
+                signup_buttons, text="Create local profile", width=230, height=40,
+                fg_color=CARD, hover_color=HOVER,
+                command=lambda: submit_signup(False),
+            ),
+        ]
+        for button in s.signup_buttons:
+            button.pack(pady=4)
 
         s.err = ctk.CTkLabel(
             form, text="", text_color="#ff6b6b",
@@ -646,6 +680,11 @@ class Gate(ctk.CTkFrame):
             user["city"] = user.get("city", "")
             user["state"] = server_profile.get("state") or user.get("state", "")
             user["zip"] = server_profile.get("zip") or user.get("zip", "")
+            user["full_name"] = server_profile.get("full_name") or user.get("full_name", "")
+            user["bio"] = server_profile.get("bio") or ""
+            user["interests"] = server_profile.get("interests") or ""
+            user["website"] = server_profile.get("site") or ""
+            user["avatar_path"] = (local_user or {}).get("avatar_path") or saved_avatar_path(profile.get("username"))
 
             s.server_client = client
             s.server_access_token = tokens.get("access_token")
@@ -679,37 +718,112 @@ class Gate(ctk.CTkFrame):
 
         s.login_err.configure(text=message, text_color="#ff6b6b")
 
-    def do_signup(s, u, p, z, *, full_name="", state="", email="", bio="", interests="", website="", avatar_path=""):
+    def do_signup(s, u, p, z, *, online=False, full_name="", state="", email="", bio="", interests="", website="", avatar_path=""):
         u, z, state, email, full_name = u.strip(), z.strip(), state.strip().upper(), email.strip(), full_name.strip()
         if not full_name: return s.err.configure(text="Enter your name.")
         if len(u) < 3: return s.err.configure(text="Username needs at least 3 characters.")
-        if len(p) < 6: return s.err.configure(text="Password needs at least 6 characters.")
-        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email): return s.err.configure(text="Enter a valid email address for account recovery.")
+        minimum_password_length = 12 if online else 6
+        if len(p) < minimum_password_length:
+            return s.err.configure(text=f"Password needs at least {minimum_password_length} characters.")
+        if online and not re.fullmatch(r"[A-Za-z0-9_]{3,40}", u):
+            return s.err.configure(text="Online usernames must be 3–40 letters, numbers, or underscores.")
+        if online and len(full_name) > 120:
+            return s.err.configure(text="Your name must be 120 characters or fewer.")
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email): return s.err.configure(text="Enter a valid email address.")
         if not (z.isdigit() and len(z) == 5): return s.err.configure(text="Enter a 5-digit US ZIP code.")
         if not re.fullmatch(r"[A-Z]{2}", state): return s.err.configure(text="Enter your 2-letter state code, such as OH.")
         if website and not re.match(r"^https?://", website.strip(), re.I): website = "https://" + website.strip()
-        s.err.configure(text="Creating your profile and looking up the ZIP code…", text_color="#c9a45c")
+        if online and len(bio) > 2000:
+            return s.err.configure(text="About you must be 2,000 characters or fewer.")
+        if online and len(interests) > 4000:
+            return s.err.configure(text="Interests must be 4,000 characters or fewer.")
+        if online and len(website) > 255:
+            return s.err.configure(text="Your website or social link must be 255 characters or fewer.")
+        for button in getattr(s, "signup_buttons", []):
+            button.configure(state="disabled")
+        s.err.configure(text="Creating your online account and profile…" if online else "Creating your local profile and looking up the ZIP code…", text_color="#c9a45c")
         def worker():
             try:
                 city, found_state, lat, lng = lookup_zip(z)
                 if found_state and found_state.upper() != state:
-                    s.app.uiq.put((s.finish_signup, (u, p, False, f"ZIP code belongs to {found_state}; check your state entry."))); return
-                ok, msg = database.create_user(u, p, z, city, found_state or state, lat, lng, full_name=full_name, email=email,
+                    if online:
+                        s.app.uiq.put((s.finish_server_signup, (u, p, None, None, None, city, avatar_path,
+                            f"ZIP code belongs to {found_state}; check your state entry.")))
+                    else:
+                        s.app.uiq.put((s.finish_signup, (u, p, False, f"ZIP code belongs to {found_state}; check your state entry.")))
+                    return
+                state_value = found_state or state
+                if online:
+                    client = ServerClient()
+                    account_created = False
+                    try:
+                        client.register(email, u, p)
+                        account_created = True
+                        tokens = client.login(u, p)
+                        access_token = tokens["access_token"]
+                        client.update_profile(access_token, {
+                            "full_name": full_name,
+                            "state": state_value,
+                            "zip": z,
+                            "bio": bio,
+                            "interests": interests,
+                            "site": website,
+                        })
+                        profile = client.get_profile(access_token)
+                        s.app.uiq.put((s.finish_server_signup, (u, p, client, tokens, profile, city, avatar_path, None)))
+                    except Exception as exc:
+                        s.app.uiq.put((s.finish_server_signup, (u, p, client, None, None, city, avatar_path,
+                            f"Online account was created, but setup did not finish: {exc}. Please sign in to continue." if account_created else f"Could not create the online account: {exc}")))
+                    return
+                ok, msg = database.create_user(u, p, z, city, state_value, lat, lng, full_name=full_name, email=email,
                                                bio=bio, interests=interests, website=website, avatar_path=avatar_path)
                 s.app.uiq.put((s.finish_signup, (u, p, ok, msg)))
             except Exception as exc:
-                s.app.uiq.put((s.finish_signup, (u, p, False, f"Could not create the profile: {exc}")))
+                if online:
+                    s.app.uiq.put((s.finish_server_signup, (u, p, None, None, None, "", avatar_path, f"Could not create the online account: {exc}")))
+                else:
+                    s.app.uiq.put((s.finish_signup, (u, p, False, f"Could not create the profile: {exc}")))
         threading.Thread(target=worker, daemon=True).start()
 
     def finish_signup(s, username, password, ok, message):
         if not ok:
             try:
                 if s.err.winfo_exists(): s.err.configure(text=message, text_color="#ff6b6b")
+                for button in getattr(s, "signup_buttons", []):
+                    if button.winfo_exists(): button.configure(state="normal")
             except Exception: pass
             return
         s.user = database.verify_user(username, password)
         s.remember_credentials(username, password, True)
         s.show_dashboard()
+
+    def finish_server_signup(s, username, password, client, tokens, profile, city, avatar_path, error):
+        if error or not tokens or not profile:
+            try:
+                if s.err.winfo_exists(): s.err.configure(text=error or "Online account setup did not finish.", text_color="#ff6b6b")
+                for button in getattr(s, "signup_buttons", []):
+                    if button.winfo_exists(): button.configure(state="normal")
+            except Exception: pass
+            return
+        server_profile = profile.get("profile") or {}
+        save_avatar_path(username, avatar_path)
+        s.server_client = client
+        s.server_access_token = tokens.get("access_token")
+        s.server_refresh_token = tokens.get("refresh_token")
+        s.user = {
+            **profile,
+            "display_name": server_profile.get("full_name") or profile.get("username", username),
+            "full_name": server_profile.get("full_name") or "",
+            "city": city,
+            "state": server_profile.get("state") or "",
+            "zip": server_profile.get("zip") or "",
+            "bio": server_profile.get("bio") or "",
+            "interests": server_profile.get("interests") or "",
+            "website": server_profile.get("site") or "",
+            "avatar_path": avatar_path or "",
+        }
+        s.remember_credentials(username, password, True)
+        s.show_dashboard(status="Online Spotlight account created and signed in.")
 
     def guest(s):
         s.user = {"display_name": "Guest", "city": "", "state": "", "zip": ""}; s.show_dashboard()
@@ -753,7 +867,8 @@ class Gate(ctk.CTkFrame):
             except (OSError, ValueError, TypeError):
                 avatar_image = None
             avatar_button = ctk.CTkButton(p, text="" if avatar_image else "👤", image=avatar_image, width=64, height=64,
-                                           corner_radius=32, fg_color=CARD, hover_color=HOVER, state="disabled")
+                                           corner_radius=32, fg_color=CARD, hover_color=HOVER,
+                                           command=s.show_profile_editor)
             avatar_button.place(relx=0.97, y=10, anchor="ne")
         ctk.CTkLabel(p, text=f"Welcome, {u.get('display_name', 'Guest')}", font=("Segoe UI", 20), text_color=GOLD).pack()
         where = ", ".join(x for x in (city, state) if x)
@@ -1116,17 +1231,36 @@ class Gate(ctk.CTkFrame):
     def show_profile_editor(s):
         if not s.user or not s.user.get("username"):
             s.say("Create a Spotlight profile to edit your account details."); return
-        user = database.get_user(s.user["username"])
+        username = s.user["username"]
+        local_user = database.get_user(username)
+        online = bool(getattr(s, "server_client", None) and getattr(s, "server_access_token", None))
+        user = dict(local_user or s.user)
+        server_profile = s.user.get("profile") or {}
+        if online:
+            user.update({
+                "full_name": server_profile.get("full_name") or s.user.get("full_name") or s.user.get("display_name", ""),
+                "email": s.user.get("email", ""),
+                "zip": server_profile.get("zip") or s.user.get("zip", ""),
+                "state": server_profile.get("state") or s.user.get("state", ""),
+                "bio": server_profile.get("bio") or s.user.get("bio", ""),
+                "interests": server_profile.get("interests") or s.user.get("interests", ""),
+                "website": server_profile.get("site") or s.user.get("website", ""),
+                "avatar_path": s.user.get("avatar_path") or saved_avatar_path(username),
+            })
         dialog = ctk.CTkToplevel(s.app); dialog.title("Your Spotlight profile"); dialog.geometry("600x720"); dialog.minsize(520, 620); dialog.configure(fg_color=BG); dialog.transient(s.app)
         form = ctk.CTkScrollableFrame(dialog, fg_color=PANEL); form.pack(fill="both", expand=True, padx=16, pady=16)
         ctk.CTkLabel(form, text="Your profile", font=("Segoe UI", 22, "bold"), text_color=GOLD).pack(anchor="w", padx=12, pady=(8, 4))
-        ctk.CTkLabel(form, text="Your details are stored on this PC. Public profile sharing is not enabled in the current local community feed.",
+        profile_note = ("Account details are saved to your online SpotLight profile. Your profile photo stays on this PC."
+                        if online else "Your details are stored on this PC. Public profile sharing is not enabled in the current local community feed.")
+        ctk.CTkLabel(form, text=profile_note,
                      text_color="#9aa0b5", wraplength=500, justify="left").pack(anchor="w", padx=12, pady=(0, 10))
         def field(label, placeholder, value=""):
             ctk.CTkLabel(form, text=label, text_color="#cfd3e0").pack(anchor="w", padx=14, pady=(5, 0))
             entry = ctk.CTkEntry(form, placeholder_text=placeholder, width=500); entry.pack(padx=10, pady=3); entry.insert(0, value or ""); return entry
         name = field("Full name", "Your name", user.get("full_name") or user.get("display_name"))
         email = field("Email", "name@example.com", user.get("email"))
+        if online:
+            email.configure(state="disabled")
         zip_box = field("ZIP code", "5-digit ZIP", user.get("zip"))
         state = field("State", "Two-letter code", user.get("state"))
         ctk.CTkLabel(form, text="About you", text_color="#cfd3e0").pack(anchor="w", padx=14, pady=(7, 0))
@@ -1141,13 +1275,19 @@ class Gate(ctk.CTkFrame):
         def save():
             email_value = email.get().strip(); zip_value = zip_box.get().strip(); state_value = state.get().strip().upper()
             if not name.get().strip(): error.configure(text="Enter your name."); return
-            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email_value): error.configure(text="Enter a valid email address."); return
+            if not online and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email_value): error.configure(text="Enter a valid email address."); return
             if not (zip_value.isdigit() and len(zip_value) == 5): error.configure(text="Enter a 5-digit ZIP code."); return
             if not re.fullmatch(r"[A-Z]{2}", state_value): error.configure(text="Enter a two-letter state code."); return
+            if online and len(name.get().strip()) > 120: error.configure(text="Your name must be 120 characters or fewer."); return
+            if online and len(bio.get("1.0", "end-1c")) > 2000: error.configure(text="About you must be 2,000 characters or fewer."); return
+            if online and len(interests.get()) > 4000: error.configure(text="Interests must be 4,000 characters or fewer."); return
+            website_value = website.get().strip()
+            if website_value and not re.match(r"^https?://", website_value, re.I): website_value = "https://" + website_value
+            if online and len(website_value) > 255: error.configure(text="Your website or social link must be 255 characters or fewer."); return
             values = {"full_name": name.get(), "email": email_value, "zip": zip_value, "state": state_value,
                       "city": user.get("city", ""), "lat": user.get("lat"), "lng": user.get("lng"),
                       "bio": bio.get("1.0", "end-1c"), "interests": interests.get(),
-                      "website": website.get(), "avatar_path": avatar["path"]}
+                      "website": website_value, "avatar_path": avatar["path"]}
             save_button.configure(state="disabled"); error.configure(text="Saving profile and checking ZIP code…", text_color=GOLD)
             def worker():
                 try:
@@ -1159,21 +1299,47 @@ class Gate(ctk.CTkFrame):
                         values.update({"state": zip_state or state_value, "city": city or (values["city"] if same_zip else ""),
                                        "lat": lat if lat is not None else (values["lat"] if same_zip else None),
                                        "lng": lng if lng is not None else (values["lng"] if same_zip else None)})
-                        result = database.update_user_profile(user["username"], values)
+                        if online:
+                            response = s.server_client.update_profile(s.server_access_token, {
+                                "full_name": values["full_name"].strip(), "state": values["state"], "zip": zip_value,
+                                "bio": values["bio"], "interests": values["interests"], "site": values["website"],
+                            })
+                            result = (True, "Online profile saved. Your photo is stored on this PC.", response, city, lat, lng)
+                        else:
+                            result = database.update_user_profile(user["username"], values)
                 except Exception as exc: result = (False, f"Could not save the profile: {exc}")
-                s.app.uiq.put((s.finish_profile_update, (dialog, user["username"], error, save_button, *result)))
+                s.app.uiq.put((s.finish_profile_update, (dialog, username, error, save_button, online, avatar["path"], *result)))
             threading.Thread(target=worker, daemon=True).start()
         save_button = ctk.CTkButton(form, text="Save profile", width=220, height=40, command=save); save_button.pack(pady=(6, 14))
         dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
 
-    def finish_profile_update(s, dialog, username, error, save_button, ok, message):
+    def finish_profile_update(s, dialog, username, error, save_button, online, avatar_path, ok, message, response=None, city="", lat=None, lng=None):
         if not ok:
             try:
                 if error.winfo_exists(): error.configure(text=message, text_color="#ff6b6b")
                 if save_button.winfo_exists(): save_button.configure(state="normal")
             except Exception: pass
             return
-        s.user = database.get_user(username)
+        if online:
+            account = dict(response or {})
+            server_profile = account.get("profile") or {}
+            s.user.update(account)
+            s.user.update({
+                "full_name": server_profile.get("full_name") or "",
+                "display_name": server_profile.get("full_name") or username,
+                "state": server_profile.get("state") or "",
+                "zip": server_profile.get("zip") or "",
+                "bio": server_profile.get("bio") or "",
+                "interests": server_profile.get("interests") or "",
+                "website": server_profile.get("site") or "",
+                "city": city or s.user.get("city", ""),
+                "lat": lat if lat is not None else s.user.get("lat"),
+                "lng": lng if lng is not None else s.user.get("lng"),
+                "avatar_path": avatar_path,
+            })
+            save_avatar_path(username, avatar_path)
+        else:
+            s.user = database.get_user(username)
         try:
             if dialog.winfo_exists(): dialog.destroy()
         except Exception: pass

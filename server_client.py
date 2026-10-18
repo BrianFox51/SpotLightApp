@@ -104,6 +104,13 @@ class ServerClient:
     def get_profile(self, access_token: str) -> dict[str, Any]:
         return self._request("GET", "/me", access_token=access_token)
 
+    def update_profile(
+        self, access_token: str, profile: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._request(
+            "PATCH", "/me", profile, access_token=access_token
+        )
+
     def list_favorites(self, access_token: str) -> list[dict[str, Any]]:
         return self._request(
             "GET", "/favorites", access_token=access_token

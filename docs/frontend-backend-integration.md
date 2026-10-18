@@ -9,13 +9,15 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - The desktop app can sign in to the optional SpotLight server using either an account username or email plus password.
 - The client reads its API base URL from `SPOTLIGHT_API_BASE_URL`; it must include `/api/v1`. Keep any personal Tailscale address in local configuration, not public source.
 - A successful server sign-in retrieves `GET /me` and holds access and refresh tokens in memory for the current app session.
-- Server account creation is not connected to the desktop Create Profile form. That form still creates a local SQLite profile.
+- The desktop Create Profile tab now offers separate **Create online account** and **Create local profile** actions. Online creation calls `POST /auth/register`, signs in, and sends the entered profile fields to `PATCH /me` on a background worker. It then opens the dashboard with the server session active. Local creation continues to use SQLite and remains available offline.
+- Server account passwords require at least 12 characters; local profiles continue to require at least 6. Choosing online creation does not silently fall back to local creation when the server is unavailable. Profile photos remain local to this PC and are not uploaded.
+- The profile image on the dashboard opens the profile editor. Online profile fields are saved with `PATCH /me`; account email is read-only there. The profile photo path is stored per username in the local config, and the image itself is not uploaded.
+- If registration succeeds but the follow-up sign-in or profile save fails, the app reports that the online account was created and directs the user to sign in; it does not pretend that local creation succeeded.
 - If server sign-in fails but the same credentials match a local account, the app falls back to local sign-in. Guest access remains available.
 - Favorites in the desktop app remain local SQLite records. The server client has favorites API methods, but the UI does not call them and no local-to-server favorite mapping or sync is implemented.
 - The dashboard's six category count tiles open their matching category views, and the account-specific Favorites tile and in-app Favorites button open a dedicated Favorites list. Guest activation shows the registration prompt. Favorite items remain tied to the current local username.
 - Server sign-out currently clears the desktop session; it does not call the API revoke endpoint. The refresh token is not persisted or used to restore a server session after restarting the app.
 - Login recovery links open local account recovery dialogs. They operate on profiles stored on this PC and do not recover or reset server credentials.
-- The Git working tree was clean at `aa0205f` when these notes were reviewed.
 
 ## Confirmed desktop behavior
 
@@ -25,7 +27,10 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - Server login sends `identifier` and `password` to `POST /auth/login`, then uses the returned access token for `GET /me`.
 - On a successful server login, the desktop stores the access and refresh tokens only in memory. The optional Remember password setting stores the entered password using Windows DPAPI for the current Windows user; it does not persist the refresh token.
 - A local profile is used if server access is unavailable or rejects the account and local verification succeeds. The status message distinguishes local fallback from server sign-in.
-- The Create Profile flow writes a profile to the local SQLite database. It does not call `POST /auth/register`.
+- **Create local profile** writes a profile to the local SQLite database and remains available offline.
+- **Create online account** calls `POST /auth/register`, signs in, and updates the server profile with the entered name, state, ZIP, bio, interests, and site. These network calls run on a background worker. The app then opens the dashboard with server tokens held in memory for the session. Profile photos stay on this PC and are not uploaded.
+- Clicking the dashboard profile image opens the profile editor. For online accounts, editable profile fields are sent to `PATCH /me`; email remains read-only. The selected photo is kept locally and its path is saved per username in the local config.
+- Online signup enforces the server's 12-character password minimum and username format. Local profile creation retains its 6-character minimum. Online signup failure never silently creates a local-only account.
 - Guest mode has no account identity and cannot use the Favorites star; selecting it shows the registration prompt.
 - Username and password recovery use the local database and require the local profile's email and ZIP code. Password reset changes only the local profile password.
 
@@ -33,7 +38,7 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 
 - `database.py` stores local favorites by `(username, media_id)` in SQLite.
 - Local `media_id` is a SHA-1 hash of category, title, and subtitle. It is not the server's favorite ID or provider ID.
-- `ServerClient` exposes list/add/remove favorites methods, but the desktop UI does not currently call them.
+- `ServerClient` exposes profile update and list/add/remove favorites methods. The UI uses profile update during online account creation; favorites methods are not yet connected.
 - Provider refresh cleanup now deletes only rows owned solely by that provider and not favorited by any local account. An empty keep-list is treated as inconclusive and never clears a provider's catalog. Favorited rows are retained as cached catalog entries, including when Watchmode's age-based expiry runs. Old streaming-category rows migrate their favorite links to the replacement movie/TV item IDs before the old rows are deleted.
 - Generic `database.delete_item` still removes favorites for its media ID. Avoid using it for provider refresh cleanup; use the guarded prune helpers instead.
 - The dashboard category count tiles open their matching Spotlight categories. The Favorites tile opens the dedicated per-user Favorites page; guests receive a registration prompt. The top Favorites shortcut is hidden on login and the Favorites view, and is shown in Spotlight after entering from the dashboard.

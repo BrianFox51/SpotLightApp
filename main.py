@@ -582,7 +582,7 @@ class App(ctk.CTk):
         self.buy_btn = ctk.CTkButton(bar, text="", fg_color="#1E7A34", hover_color="#27a046", command=self.open_buy)
         self.trailer_btn = ctk.CTkButton(bar, text="▶  Play trailer", fg_color="#9b1c1c", hover_color="#c42a2a", command=self.play_trailer)
         self.mute_btn = ctk.CTkButton(bar, text="🔊  Unmute", fg_color=CARD, hover_color=HOVER, command=self.toggle_sound)
-        self.title = ctk.CTkLabel(p, text="Pick a genre, then a title", font=("Segoe UI", 34, "bold"), anchor="w"); self.title.pack(fill="x", padx=20, pady=(14, 0))
+        self.title_label = ctk.CTkLabel(p, text="Pick a genre, then a title", font=("Segoe UI", 34, "bold"), anchor="w"); self.title_label.pack(fill="x", padx=20, pady=(14, 0))
         self.meta_lbl = ctk.CTkLabel(p, text="", font=("Segoe UI", 14), text_color="#9aa0b5", anchor="w"); self.meta_lbl.pack(fill="x", padx=20)
         self.desc = ctk.CTkLabel(p, text="", font=("Segoe UI", 16), text_color="#c8ccd8", justify="left", anchor="w", wraplength=800); self.desc.pack(fill="x", padx=20, pady=10)
         self.about_label = None; self.event_detail_labels = []
@@ -617,10 +617,10 @@ class App(ctk.CTk):
                 self.theater.configure(height=140 if self.sel is None else int(min(max(iw * 0.42, 300), 500)))
                 logical_width = self.insp._reverse_widget_scaling(iw)
                 title_size = max(20, min(34, logical_width // 22))
-                title_text = self.title.cget("text")
+                title_text = self.title_label.cget("text")
                 meta_text = self.meta_lbl.cget("text")
                 desc_text = self.desc.cget("text")
-                self.title.configure(font=("Segoe UI", title_size, "bold"), wraplength=text_width, justify="left",
+                self.title_label.configure(font=("Segoe UI", title_size, "bold"), wraplength=text_width, justify="left",
                                      height=wrapped_height(self.insp, title_text, title_size, text_width, True))
                 self.meta_lbl.configure(wraplength=text_width, justify="left", height=wrapped_height(self.insp, meta_text, 14, text_width))
                 self.desc.configure(wraplength=text_width, height=wrapped_height(self.insp, desc_text, 16, text_width))
@@ -927,7 +927,7 @@ class App(ctk.CTk):
         amb = os.path.join(MEDIA, "ambient", cat + ".mp4")
         self.hero.play(amb, FXK[cat], acc, None, (name.upper(), TAG[cat]), dim=0.65)
         self.theater.play(None, FXK[cat], acc, None, ("Select an event" if cat == "music" else "Select a title", "Pick a genre or event type, then choose an event" if cat == "music" else "Pick a genre, then choose from the trending feed"))
-        self.title.configure(text="Choose a genre or event type" if cat == "music" else "Pick a genre, then a title"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
+        self.title_label.configure(text="Choose a genre or event type" if cat == "music" else "Pick a genre, then a title"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
         self.close_bio(); self.poster.pack_forget(); [b.pack_forget() for b in (self.find_btn, self.buy_btn, self.trailer_btn, self.mute_btn)]; self.show_promo(True)
         for f in (self.cast_row, self.ev_box):
             for w in f.winfo_children(): w.destroy()
@@ -1195,7 +1195,7 @@ class App(ctk.CTk):
         self.poster.pack_forget()
         for button in (self.find_btn, self.buy_btn, self.trailer_btn, self.mute_btn):
             button.pack_forget()
-        self.title.configure(text="Your favorites")
+        self.title_label.configure(text="Your favorites")
         self.meta_lbl.configure(text="")
         self.desc.configure(text="")
         for frame in (self.cast_row, self.ev_box, self.about_box):
@@ -1219,7 +1219,7 @@ class App(ctk.CTk):
             self.sel = None; self.sel_cat = None; self.close_bio(); self.show_promo(True)
             self.poster.pack_forget()
             for button in (self.find_btn, self.buy_btn, self.trailer_btn, self.mute_btn): button.pack_forget()
-            self.title.configure(text="Favorites" if self.favorites_active else "Search results"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
+            self.title_label.configure(text="Favorites" if self.favorites_active else "Search results"); self.meta_lbl.configure(text=""); self.desc.configure(text="")
             for frame in (self.cast_row, self.ev_box, self.about_box):
                 for widget in frame.winfo_children(): widget.destroy()
             return
@@ -1305,7 +1305,7 @@ class App(ctk.CTk):
         if m.get("buy_url") and cat != "games": self.buy_btn.configure(text="🛒  " + m.get("buy_label", "Buy / Rent")); self.buy_btn.pack(side="left", padx=8)
         extra = "   •   ".join(x for x in (m.get("rated"), m.get("runtime")) if x)
         lead = ("🤝 Community listing   •   " if m.get("community") else "") + f"📅 {g(it, 'recent_shown')}" if cat in UNIT else ("Available to stream in the U.S." if is_streaming else f"★ {g(it, 'score')}   •   First: {g(it, 'first_shown')}   •   Latest: {g(it, 'recent_shown')}")
-        self.title.configure(text=f"{title} ({g(it, 'year')})" if g(it, "year") else title)
+        self.title_label.configure(text=f"{title} ({g(it, 'year')})" if g(it, "year") else title)
         platforms = self.meta.get(cat, title).get("igdb_platforms", []) if cat == "games" else []
         platform_text = "   •   Platforms: " + ", ".join(platforms[:5]) if platforms else ""
         self.meta_lbl.configure(text=f"{sub_of(it)}   •   {self.genre_of(it)}   •   {lead}" + platform_text + (f"   •   {extra}" if extra else ""))
