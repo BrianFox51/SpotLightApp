@@ -1,6 +1,10 @@
 # Python-generated files
 __pycache__/
 *.py[cod]
+/.venv-build/
+/build/
+/dist/
+/Output/
 
 # Historical copies and trailer-window experiment
 /Extra/
