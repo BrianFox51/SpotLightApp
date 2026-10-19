@@ -2,6 +2,8 @@
 Branding images are loaded from the project media/ folder, with root/assets fallbacks."""
 import os, glob, json, re, shutil, threading, urllib.request, webbrowser, time
 from io import BytesIO
+from html import escape, unescape
+from html.parser import HTMLParser
 from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -1559,14 +1561,14 @@ class Gate(ctk.CTkFrame):
                          text_color="#85899a", font=("Segoe UI", 10)).pack(side="right")
             ctk.CTkLabel(card, text=post["title"], text_color="#e7e9f0",
                          font=("Segoe UI", 17, "bold"), anchor="w").pack(fill="x", padx=12, pady=(4, 0))
-            excerpt = post["body"] if len(post["body"]) <= 260 else post["body"][:257].rstrip() + "…"
+            excerpt = s.community_body_excerpt(post["body"], 260)
             ctk.CTkLabel(card, text=excerpt, text_color="#b6bbca", wraplength=820,
                          justify="left", anchor="w").pack(fill="x", padx=12, pady=(3, 4))
             actions = ctk.CTkFrame(card, fg_color="transparent")
             actions.pack(fill="x", padx=8, pady=(0, 8))
             ctk.CTkButton(actions, text="View profile", width=105, height=30, fg_color="#24598a", hover_color="#3278b5",
                           command=lambda name=post["author"]: s.open_public_profile(client, token, name)).pack(side="left", padx=3)
-            ctk.CTkButton(actions, text=f"Open discussion · {post['reply_count']} replies", width=190,
+            ctk.CTkButton(actions, text=f"Reply · {post['reply_count']}", width=150,
                           height=30, command=lambda item=post: s.open_community_thread(client, token, item,
                               (dialog, view, status, category))).pack(side="left", padx=3)
             ctk.CTkButton(actions, text="Report", width=70, height=30, fg_color="transparent", hover_color=HOVER,
@@ -1580,7 +1582,8 @@ class Gate(ctk.CTkFrame):
     def create_community_post_dialog(s, client, token, board, category, category_values, posts, status):
         dialog = ctk.CTkToplevel(s.app)
         dialog.title("Start a Community discussion")
-        dialog.geometry("600x540")
+        dialog.geometry("660x680")
+        dialog.minsize(600, 620)
         dialog.configure(fg_color=BG)
         dialog.transient(board)
         panel = ctk.CTkFrame(dialog, fg_color=PANEL)
@@ -1592,22 +1595,89 @@ class Gate(ctk.CTkFrame):
                           width=180).pack(anchor="w", padx=14, pady=5)
         title = ctk.CTkEntry(panel, placeholder_text="Discussion title", width=520)
         title.pack(padx=14, pady=5)
-        body = ctk.CTkTextbox(panel, width=520, height=250)
-        body.pack(padx=14, pady=5)
+        toolbar = ctk.CTkFrame(panel, fg_color=CARD, corner_radius=8)
+        toolbar.pack(fill="x", padx=14, pady=(7, 0))
+        body = ctk.CTkTextbox(panel, width=590, height=300, wrap="word")
+        editor = body._textbox
+        body.pack(fill="both", expand=True, padx=14, pady=(0, 4))
+        for tag, attrs in {
+            "fmt_bold": {"font": ("Segoe UI", 13, "bold")},
+            "fmt_italic": {"font": ("Segoe UI", 13, "italic")},
+            "fmt_underline": {"underline": True},
+        }.items():
+            editor.tag_configure(tag, **attrs)
+        def apply_tag(tag):
+            try:
+                start, end = editor.index("sel.first"), editor.index("sel.last")
+                if tag in editor.tag_names(start): editor.tag_remove(tag, start, end)
+                else: editor.tag_add(tag, start, end)
+            except tk.TclError:
+                message.configure(text="Select some text first, then choose a format.", text_color="#9aa0b5")
+        ctk.CTkButton(toolbar, text="B", width=36, height=30, font=("Segoe UI", 13, "bold"),
+                      command=lambda: apply_tag("fmt_bold")).pack(side="left", padx=(6, 2), pady=6)
+        ctk.CTkButton(toolbar, text="I", width=36, height=30, font=("Segoe UI", 13, "italic"),
+                      command=lambda: apply_tag("fmt_italic")).pack(side="left", padx=2, pady=6)
+        ctk.CTkButton(toolbar, text="U", width=36, height=30, font=("Segoe UI", 13, "underline"),
+                      command=lambda: apply_tag("fmt_underline")).pack(side="left", padx=2, pady=6)
+        family = ctk.StringVar(value="Segoe UI")
+        size = ctk.StringVar(value="13")
+        families = ["Segoe UI", "Arial", "Georgia", "Times New Roman", "Courier New"]
+        sizes = ["10", "11", "12", "13", "14", "16", "18", "20", "24"]
+        def apply_font(*_):
+            try:
+                start, end = editor.index("sel.first"), editor.index("sel.last")
+                tag = f"fmt_font_{family.get().replace(' ', '_')}_{size.get()}"
+                existing = editor.tag_names(start)
+                weight = "bold" if "fmt_bold" in existing else "normal"
+                slant = "italic" if "fmt_italic" in existing else "roman"
+                editor.tag_configure(tag, font=(family.get(), int(size.get()), weight, slant))
+                editor.tag_add(tag, start, end)
+            except (tk.TclError, ValueError):
+                message.configure(text="Select some text first, then choose a font or size.", text_color="#9aa0b5")
+        ctk.CTkOptionMenu(toolbar, variable=family, values=families, width=135, height=30,
+                          command=lambda _v: apply_font()).pack(side="left", padx=4, pady=6)
+        ctk.CTkOptionMenu(toolbar, variable=size, values=sizes, width=65, height=30,
+                          command=lambda _v: apply_font()).pack(side="left", padx=2, pady=6)
+        selected_photos = []
+        photo_status = ctk.CTkLabel(panel, text="No photos attached · up to 4 JPEG, PNG, or WebP images",
+                                    text_color="#9aa0b5", anchor="w")
+        photo_status.pack(fill="x", padx=16, pady=(0, 2))
+        def choose_photos():
+            paths = filedialog.askopenfilenames(parent=dialog, title="Attach discussion photos",
+                filetypes=[("Images", "*.jpg *.jpeg *.png *.webp")])
+            if paths:
+                selected_photos[:] = list(paths[:4])
+                photo_status.configure(text=f"{len(selected_photos)} photo{'s' if len(selected_photos) != 1 else ''} ready to upload")
+                if len(paths) > 4: message.configure(text="A discussion can include up to four photos.", text_color=GOLD)
+        ctk.CTkButton(toolbar, text="＋ Photo", width=86, height=30, fg_color="#24598a", hover_color="#3278b5",
+                      command=choose_photos).pack(side="right", padx=6, pady=6)
         message = ctk.CTkLabel(panel, text="Keep it friendly. Posts are visible to Spotlight members.",
                                text_color="#9aa0b5", wraplength=500)
         message.pack(pady=5)
         submit = ctk.CTkButton(panel, text="Post discussion", width=180)
         def send():
-            title_value, body_value = title.get().strip(), body.get("1.0", "end-1c").strip()
-            if len(title_value) < 4 or not body_value:
-                message.configure(text="Add a title (at least 4 characters) and a message.", text_color="#ff6b6b")
+            title_value = title.get().strip()
+            body_value = s.serialize_community_rich_text(editor)
+            if len(title_value) < 4 or (not body_value and not selected_photos):
+                message.configure(text="Add a title (at least 4 characters) and text or a photo.", text_color="#ff6b6b")
+                return
+            if len(body_value) > 10000:
+                message.configure(text="Your formatted message is too long. Shorten it and try again.", text_color="#ff6b6b")
                 return
             submit.configure(state="disabled")
             message.configure(text="Posting…", text_color=GOLD)
             topic_value = topic.get()
             def worker():
-                try: result = (True, client.create_community_post(token, topic_value, title_value, body_value))
+                try:
+                    post_result = client.create_community_post(token, topic_value, title_value,
+                                                                body_value or "Photo attached.")
+                    upload_error = ""
+                    for path in selected_photos:
+                        try: client.upload_community_image(token, post_result["id"], path)
+                        except Exception as exc:
+                            upload_error = str(exc)
+                            break
+                    result = (True, {"post": post_result, "image_error": upload_error})
                 except Exception as exc: result = (False, str(exc))
                 s.app.uiq.put((s.finish_community_post, (dialog, board, posts, status, client, token,
                                                           category, submit, message, *result)))
@@ -1624,11 +1694,129 @@ class Gate(ctk.CTkFrame):
             submit.configure(state="normal")
             message.configure(text=f"Could not post: {data}", text_color="#ff6b6b")
             return
+        image_error = data.get("image_error", "") if isinstance(data, dict) else ""
         form.destroy()
         current = category.get()
+        if image_error:
+            messagebox.showwarning("Photo upload incomplete",
+                f"Your discussion was posted, but at least one photo could not be uploaded.\n\n{image_error}",
+                parent=board)
         s.load_community_posts(client, token, board, posts, status, {"All topics": None, "General": "general",
             "Events": "events", "Music": "music", "Movies & TV": "movies_tv", "Games": "games",
             "Sports": "sports", "Festivals": "festivals"}.get(current))
+
+    def serialize_community_rich_text(s, editor):
+        """Convert the editor's limited Tk formatting tags to safe inline HTML."""
+        output, previous_style, run = [], None, []
+        def flush():
+            nonlocal run
+            if not run: return
+            value = "".join(run)
+            escaped = escape(value).replace("\n", "<br>")
+            output.append(f'<span style="{previous_style}">{escaped}</span>' if previous_style else escaped)
+            run = []
+        index, end = "1.0", editor.index("end-1c")
+        while editor.compare(index, "<", end):
+            char = editor.get(index, f"{index} + 1 chars")
+            tags = editor.tag_names(index)
+            style = []
+            if "fmt_bold" in tags: style.append("font-weight:bold")
+            if "fmt_italic" in tags: style.append("font-style:italic")
+            if "fmt_underline" in tags: style.append("text-decoration:underline")
+            for tag in tags:
+                match = re.fullmatch(r"fmt_font_(Segoe_UI|Arial|Georgia|Times_New_Roman|Courier_New)_(\d+)", tag)
+                if match:
+                    family = match.group(1).replace("_", " ")
+                    style.extend((f"font-family:{family}", f"font-size:{max(10, min(24, int(match.group(2))))}px"))
+                    break
+            style_value = ";".join(style)
+            if style_value != previous_style:
+                flush()
+                previous_style = style_value
+            run.append(char)
+            index = editor.index(f"{index} + 1 chars")
+        flush()
+        return "".join(output).strip()
+
+    def community_body_excerpt(s, content, limit):
+        class PlainText(HTMLParser):
+            def __init__(self): super().__init__(convert_charrefs=True); self.parts = []
+            def handle_starttag(self, tag, attrs):
+                if tag == "br": self.parts.append(" ")
+            def handle_data(self, data): self.parts.append(data)
+        parser = PlainText()
+        try: parser.feed(str(content or "")); value = "".join(parser.parts)
+        except Exception: value = unescape(re.sub(r"<[^>]*>", "", str(content or "")))
+        value = " ".join(value.split())
+        return value if len(value) <= limit else value[:limit - 1].rstrip() + "…"
+
+    def render_community_rich_text(s, parent, content, height=80, wraplength=640):
+        """Render only the basic style markup produced by the Community editor."""
+        widget = ctk.CTkTextbox(parent, height=height, wrap="word", fg_color="transparent",
+                                text_color="#d4d7e1", border_width=0)
+        text = widget._textbox
+        class Renderer(HTMLParser):
+            def __init__(self, target):
+                super().__init__(convert_charrefs=True)
+                self.target, self.active, self.stack, self.serial = target, [], [], 0
+            def handle_starttag(self, tag, attrs):
+                if tag == "br": self.target.insert("end", "\n", tuple(self.active)); return
+                if tag not in {"b", "strong", "i", "em", "u", "span"}: return
+                self.serial += 1
+                name, options = f"community_render_{self.serial}", {}
+                if tag in {"b", "strong"}: options["font"] = ("Segoe UI", 13, "bold")
+                elif tag in {"i", "em"}: options["font"] = ("Segoe UI", 13, "italic")
+                elif tag == "u": options["underline"] = True
+                elif tag == "span":
+                    style = dict(part.split(":", 1) for part in dict(attrs).get("style", "").split(";") if ":" in part)
+                    family = style.get("font-family", "Segoe UI")
+                    if family not in {"Segoe UI", "Arial", "Georgia", "Times New Roman", "Courier New"}: family = "Segoe UI"
+                    try: size = max(10, min(24, int(style.get("font-size", "13px").replace("px", ""))))
+                    except ValueError: size = 13
+                    weight = "bold" if style.get("font-weight") == "bold" else "normal"
+                    slant = "italic" if style.get("font-style") == "italic" else "roman"
+                    options["font"] = (family, size, weight, slant)
+                    if style.get("text-decoration") == "underline": options["underline"] = True
+                self.target.tag_configure(name, **options)
+                self.stack.append((tag, name))
+                self.active.append(name)
+            def handle_endtag(self, tag):
+                for index in range(len(self.stack) - 1, -1, -1):
+                    if self.stack[index][0] == tag:
+                        del self.stack[index]
+                        self.active = [name for _tag, name in self.stack]
+                        break
+            def handle_data(self, data): self.target.insert("end", data, tuple(self.active))
+        try: Renderer(text).feed(str(content or ""))
+        except Exception: text.insert("end", unescape(re.sub(r"<[^>]*>", "", str(content or ""))))
+        text.configure(state="disabled")
+        return widget
+
+    def load_community_post_images(s, client, token, dialog, post, image_frame):
+        def worker():
+            try:
+                images = client.list_community_images(token, post["id"])
+                content = [(item, client.get_community_image(token, post["id"], item["id"])) for item in images]
+                result = (True, content)
+            except Exception as exc: result = (False, str(exc))
+            s.app.uiq.put((s.finish_community_post_images, (dialog, image_frame, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_community_post_images(s, dialog, image_frame, ok, images):
+        if not dialog.winfo_exists() or not image_frame.winfo_exists(): return
+        for child in image_frame.winfo_children(): child.destroy()
+        if not ok:
+            ctk.CTkLabel(image_frame, text=f"Photos could not be loaded: {images}", text_color="#9aa0b5").pack(anchor="w")
+            return
+        for _metadata, data in images:
+            try:
+                with Image.open(BytesIO(data)) as source:
+                    photo = ImageOps.contain(source.convert("RGB"), (300, 190))
+                picture = ctk.CTkImage(light_image=photo, dark_image=photo, size=photo.size)
+                s.imgs.append(picture)
+                ctk.CTkLabel(image_frame, text="", image=picture).pack(side="left", padx=4, pady=4)
+            except (OSError, ValueError):
+                ctk.CTkLabel(image_frame, text="Photo unavailable", text_color="#9aa0b5").pack(side="left", padx=4)
 
     def open_community_thread(s, client, token, post, board_context=None):
         dialog = ctk.CTkToplevel(s.app)
@@ -1646,8 +1834,10 @@ class Gate(ctk.CTkFrame):
         ctk.CTkButton(panel, text=f"Posted by {post['author']} · View profile", width=220, height=26,
                       fg_color="transparent", hover_color=HOVER,
                       command=lambda: s.open_public_profile(client, token, post["author"])).pack(anchor="w", padx=8, pady=(2, 0))
-        ctk.CTkLabel(panel, text=post["body"], text_color="#d4d7e1", wraplength=680,
-                     justify="left", anchor="w").pack(fill="x", padx=12, pady=(8, 10))
+        s.render_community_rich_text(panel, post["body"], height=110, wraplength=680).pack(fill="x", padx=12, pady=(8, 4))
+        image_frame = ctk.CTkFrame(panel, fg_color="transparent")
+        image_frame.pack(fill="x", padx=10, pady=(0, 6))
+        s.load_community_post_images(client, token, dialog, post, image_frame)
         ctk.CTkButton(panel, text="Report discussion", width=150, height=30, fg_color="transparent", hover_color=HOVER,
                       command=lambda: s.report_community_content(client, token, "post", post["id"])).pack(anchor="w", padx=8, pady=(0, 6))
         if str((s.user or {}).get("role", "")).lower() == "admin":

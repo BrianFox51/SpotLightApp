@@ -224,6 +224,53 @@ class ServerClient:
             access_token=access_token,
         )
 
+    def upload_community_image(self, access_token: str, post_id: str, file_path: str) -> dict[str, Any]:
+        boundary = uuid.uuid4().hex
+        with open(file_path, "rb") as image_file:
+            image_data = image_file.read(4 * 1024 * 1024 + 1)
+        if not image_data or len(image_data) > 4 * 1024 * 1024:
+            raise ServerAPIError("Each discussion photo must be smaller than 4 MB.")
+        content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="community-photo"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode("ascii") + image_data + f"\r\n--{boundary}--\r\n".encode("ascii")
+        request = Request(
+            f"{self.base_url}/community/posts/{quote(post_id, safe='')}/images",
+            data=body,
+            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}",
+                     "Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            try: detail = json.loads(error.read().decode("utf-8")).get("detail", error.reason)
+            except (json.JSONDecodeError, UnicodeDecodeError): detail = error.reason
+            raise ServerAPIError(str(detail), error.code) from error
+        except (URLError, TimeoutError, OSError) as error:
+            raise ServerAPIError(f"Could not reach the SpotLight server: {error}") from error
+
+    def list_community_images(self, access_token: str, post_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/community/posts/{quote(post_id, safe='')}/images", access_token=access_token)
+
+    def get_community_image(self, access_token: str, post_id: str, image_id: str) -> bytes:
+        request = Request(
+            f"{self.base_url}/community/posts/{quote(post_id, safe='')}/images/{quote(image_id, safe='')}",
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "image/webp"},
+        )
+        try:
+            with urlopen(request, timeout=20) as response:
+                return response.read(600 * 1024 + 1)
+        except HTTPError as error:
+            try: detail = json.loads(error.read().decode("utf-8")).get("detail", error.reason)
+            except (json.JSONDecodeError, UnicodeDecodeError): detail = error.reason
+            raise ServerAPIError(str(detail), error.code) from error
+        except (URLError, TimeoutError, OSError) as error:
+            raise ServerAPIError(f"Could not reach the SpotLight server: {error}") from error
+
     def list_community_replies(self, access_token: str, post_id: str) -> list[dict[str, Any]]:
         return self._request(
             "GET", f"/community/posts/{quote(post_id, safe='')}/replies", access_token=access_token
