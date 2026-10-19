@@ -23,13 +23,13 @@ if ($LASTEXITCODE -ne 0) { throw "Could not install the app or packaging depende
     --windowed `
     --onedir `
     --name SpotLightApp `
-    --icon "media\spotlight.ico" `
-    --add-data "media:media" `
+    --icon (Join-Path $projectRoot "media\spotlight.ico") `
+    --add-data "$(Join-Path $projectRoot 'media'):media" `
     --collect-all customtkinter `
     --distpath "dist" `
     --workpath "build\pyinstaller" `
     --specpath "build\spec" `
-    "main.py"
+    (Join-Path $projectRoot "main.py")
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller could not build SpotLightApp." }
 
 Write-Host "Build complete: $projectRoot\dist\SpotLightApp\SpotLightApp.exe"
