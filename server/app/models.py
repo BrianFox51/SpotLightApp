@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 def _utcnow() -> datetime:
@@ -41,6 +41,28 @@ class Profile(Base):
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
     account: Mapped["Account"] = relationship(back_populates="profile")
+
+class ProfileVisibility(Base):
+    __tablename__ = "profile_visibility"
+    account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True
+    )
+    show_avatar: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    show_state: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    show_bio: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    show_interests: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    show_site: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+class ProfileAvatar(Base):
+    __tablename__ = "profile_avatars"
+    account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True
+    )
+    image_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    media_type: Mapped[str] = mapped_column(String(40), default="image/webp", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
 class Session(Base):
     __tablename__ = "sessions"
     id: Mapped[str] = mapped_column(

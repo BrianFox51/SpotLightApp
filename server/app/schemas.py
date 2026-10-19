@@ -49,6 +49,11 @@ class ProfileResponse(BaseModel):
     interests: str | None
     site: str | None
     avatar_ref: str | None
+    show_avatar: bool = False
+    show_state: bool = False
+    show_bio: bool = False
+    show_interests: bool = False
+    show_site: bool = False
 class MeResponse(AccountResponse):
     profile: ProfileResponse
 class ProfileUpdate(BaseModel):
@@ -59,6 +64,22 @@ class ProfileUpdate(BaseModel):
     interests: str | None = Field(default=None, max_length=4000)
     site: str | None = Field(default=None, max_length=255)
     avatar_ref: str | None = Field(default=None, max_length=255)
+    show_avatar: bool | None = None
+    show_state: bool | None = None
+    show_bio: bool | None = None
+    show_interests: bool | None = None
+    show_site: bool | None = None
+
+class PublicProfileResponse(BaseModel):
+    username: str
+    display_name: str
+    role: str
+    created_at: datetime
+    avatar_url: str | None = None
+    state: str | None = None
+    bio: str | None = None
+    interests: str | None = None
+    site: str | None = None
 class FavoriteCreate(BaseModel):
     category: str = Field(min_length=1, max_length=60)
     provider_id: str = Field(min_length=1, max_length=120)
@@ -110,3 +131,7 @@ class CommunityReportCreate(BaseModel):
 class CommunityModerationRequest(BaseModel):
     action: Literal["dismiss", "hide"]
     reason: str | None = Field(default=None, max_length=1000)
+
+class CommunityContentModerationRequest(BaseModel):
+    action: Literal["hide", "restore"] = "hide"
+    reason: str = Field(default="", max_length=1000)

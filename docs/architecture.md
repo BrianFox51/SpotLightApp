@@ -4,7 +4,7 @@
 
 1. `main.py` imports the application modules, sets up project-relative media folders, defines category and display helpers, and defines the `App` window.
 2. `App.__init__` loads display metadata, seeds demo catalog entries once, builds the interface, starts background connection monitoring, and creates the sign-in/dashboard gate.
-3. `dashboard.Gate` handles guest access, separate online account registration and local profile creation, server-first sign-in with local-account fallback, local-only account recovery, profile display, dashboard statistics, API credential editing/status, and the combined Refresh action. Server registration, sign-in, profile retrieval, and profile updates use `server_client.py`. The dashboard still requires manual refresh; automatic refresh, interactive statistic quick links, and a dedicated Favorites page are planned.
+3. `dashboard.Gate` handles guest access, separate online account registration and local profile creation, server-first sign-in with local-account fallback, account recovery, profile display/editing, dashboard statistics, API credential editing/status, and the combined Refresh action. Server registration, sign-in, profile retrieval, public member profiles, profile photo upload, and profile updates use `server_client.py`. The dashboard still requires manual refresh; automatic refresh and interactive statistic quick links are planned.
 4. The catalog is read from SQLite through `database.py`. Selecting a title displays its local metadata, cast/crew, events, and notes. Spotlight Search stays available above the content and searches saved catalog fields across all categories or the current category.
 5. `online.py` retrieves missing details in background threads. It also syncs TMDB theatrical/airing catalogs and a bounded Watchmode U.S. streaming catalog; per-title Watchmode provider links are requested on demand. `main.py` returns results to the UI thread through a queue.
 6. `events.py` syncs Ticketmaster events; `community.py` syncs an optional organizer feed. The `promote.py` form lets an organizer prepare a submission for curator review.
@@ -25,7 +25,7 @@ Implements the sign-in/create-account/guest screen and the dashboard shown after
 
 ### `server_client.py`
 
-Small HTTP client for the optional backend. Reads `SPOTLIGHT_API_BASE_URL`, sends JSON requests, attaches bearer access tokens for protected calls, and translates HTTP/network failures into `ServerAPIError`. The desktop uses registration, login, and profile retrieval/update; token refresh/revocation and server favorites methods are not yet wired to the UI.
+Small HTTP client for the optional backend. Reads `SPOTLIGHT_API_BASE_URL`, sends JSON or multipart requests, attaches bearer access tokens for protected calls, and translates HTTP/network failures into `ServerAPIError`. The desktop uses account registration/login, profile retrieval/update and visibility controls, public profile/photo retrieval, Community discussions, reports, and admin moderation; token refresh/revocation and server favorites methods are not yet wired to the UI.
 
 ### `online.py`
 

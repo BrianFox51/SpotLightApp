@@ -1,6 +1,7 @@
 """Spotlight startup gate: Mythic Mask Works banner, sign in / create account / guest, then the Dashboard with live stats.
 Branding images are loaded from the project media/ folder, with root/assets fallbacks."""
 import os, glob, json, re, shutil, threading, urllib.request, webbrowser, time
+from io import BytesIO
 from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -340,7 +341,7 @@ class Gate(ctk.CTkFrame):
     def show_login(s):
         s.app.hide_favorites_button()
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 0.2.1.0", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 0.9.2.1", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
@@ -429,18 +430,6 @@ class Gate(ctk.CTkFrame):
             text="Remember password on this PC (securely)",
             variable=remember,
         ).pack(anchor="w", padx=70, pady=(2, 2))
-
-        ctk.CTkLabel(
-            sign_in_form,
-            text=(
-                "Recovery links work with local profiles saved on this PC. "
-                "Server account recovery is not available yet."
-            ),
-            text_color="#85899a",
-            font=("Segoe UI", 10),
-            wraplength=500,
-            justify="center",
-        ).pack(pady=(0, 4))
 
         ctk.CTkButton(
             sign_in_form,
@@ -576,7 +565,10 @@ class Gate(ctk.CTkFrame):
                 while os.path.exists(destination):
                     destination = f"{root}_{number}{ext}"; number += 1
                 shutil.copy2(selected, destination)
-            avatar["path"] = destination; status.configure(text=f"Selected: {os.path.basename(destination)}")
+            avatar["path"] = destination
+            avatar["dirty"] = True
+            avatar["remove"] = False
+            status.configure(text=f"Selected: {os.path.basename(destination)}")
         except Exception as exc:
             status.configure(text=f"Could not load that image: {exc}", text_color="#ff6b6b")
 
@@ -887,6 +879,8 @@ class Gate(ctk.CTkFrame):
                             "interests": interests,
                             "site": website,
                         })
+                        if avatar_path:
+                            client.upload_profile_avatar(access_token, avatar_path)
                         profile = client.get_profile(access_token)
                         s.app.uiq.put((s.finish_server_signup, (u, p, client, tokens, profile, city, avatar_path, None)))
                     except Exception as exc:
@@ -1367,10 +1361,20 @@ class Gate(ctk.CTkFrame):
         dialog = ctk.CTkToplevel(s.app); dialog.title("Your Spotlight profile"); dialog.geometry("600x720"); dialog.minsize(520, 620); dialog.configure(fg_color=BG); dialog.transient(s.app)
         form = ctk.CTkScrollableFrame(dialog, fg_color=PANEL); form.pack(fill="both", expand=True, padx=16, pady=16)
         ctk.CTkLabel(form, text="Your profile", font=("Segoe UI", 22, "bold"), text_color=GOLD).pack(anchor="w", padx=12, pady=(8, 4))
-        profile_note = ("Account details are saved to your online SpotLight profile. Your profile photo stays on this PC."
+        profile_note = ("Your name, role, and join date are visible to members. Email and ZIP stay private. Choose which other profile details to share."
                         if online else "Your details are stored on this PC. Public profile sharing is not enabled in the current local community feed.")
         ctk.CTkLabel(form, text=profile_note,
                      text_color="#9aa0b5", wraplength=500, justify="left").pack(anchor="w", padx=12, pady=(0, 10))
+        visibility_vars = {}
+        if online:
+            ctk.CTkLabel(form, text="Public profile sharing", text_color=GOLD,
+                         font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(2, 2))
+            for key, label in (("show_avatar", "Show my profile photo"), ("show_state", "Show my state"),
+                               ("show_bio", "Show my About you text"), ("show_interests", "Show my interests"),
+                               ("show_site", "Show my website or social link")):
+                variable = ctk.BooleanVar(value=bool(server_profile.get(key, False)))
+                visibility_vars[key] = variable
+                ctk.CTkCheckBox(form, text=label, variable=variable, text_color="#cfd3e0").pack(anchor="w", padx=16, pady=2)
         def field(label, placeholder, value=""):
             ctk.CTkLabel(form, text=label, text_color="#cfd3e0").pack(anchor="w", padx=14, pady=(5, 0))
             entry = ctk.CTkEntry(form, placeholder_text=placeholder, width=500); entry.pack(padx=10, pady=3); entry.insert(0, value or ""); return entry
@@ -1384,10 +1388,18 @@ class Gate(ctk.CTkFrame):
         bio = ctk.CTkTextbox(form, width=500, height=80); bio.pack(padx=10, pady=3); bio.insert("1.0", user.get("bio") or "")
         interests = field("Interests", "Genres, teams, artists, games", user.get("interests"))
         website = field("Website or social link", "https://…", user.get("website"))
-        avatar = {"path": user.get("avatar_path") or ""}
-        avatar_status = ctk.CTkLabel(form, text=os.path.basename(avatar["path"]) if avatar["path"] else "No profile photo selected", text_color="#9aa0b5")
+        avatar = {"path": user.get("avatar_path") or "", "dirty": False, "remove": False}
+        avatar_status = ctk.CTkLabel(form, text=("Server profile photo saved" if online and server_profile.get("avatar_ref") else os.path.basename(avatar["path"]) if avatar["path"] else "No profile photo selected"), text_color="#9aa0b5")
         avatar_status.pack(anchor="w", padx=14, pady=(8, 0))
         ctk.CTkButton(form, text="Choose or replace photo", width=190, command=lambda: s.choose_avatar(avatar, avatar_status)).pack(anchor="w", padx=12, pady=5)
+        if online:
+            def remove_server_avatar():
+                avatar.update({"path": "", "dirty": True, "remove": True})
+                avatar_status.configure(text="Server photo will be removed when you save.")
+            ctk.CTkButton(form, text="Remove server photo", width=190, fg_color=CARD, hover_color=HOVER,
+                          command=remove_server_avatar).pack(anchor="w", padx=12, pady=(0, 8))
+            ctk.CTkLabel(form, text="Photos are optimized and stored on the SpotLight server (up to 100 KB).",
+                         text_color="#9aa0b5", wraplength=500, justify="left").pack(anchor="w", padx=14, pady=(0, 5))
         error = ctk.CTkLabel(form, text="", text_color="#ff6b6b", wraplength=500); error.pack(pady=4)
         def save():
             email_value = email.get().strip(); zip_value = zip_box.get().strip(); state_value = state.get().strip().upper()
@@ -1405,10 +1417,12 @@ class Gate(ctk.CTkFrame):
                       "city": user.get("city", ""), "lat": user.get("lat"), "lng": user.get("lng"),
                       "bio": bio.get("1.0", "end-1c"), "interests": interests.get(),
                       "website": website_value, "avatar_path": avatar["path"]}
-            save_button.configure(state="disabled"); error.configure(text="Saving profile and checking ZIP code…", text_color=GOLD)
+            visibility_values = {key: variable.get() for key, variable in visibility_vars.items()} if online else {}
+            save_button.configure(state="disabled"); error.configure(text="Saving profile…", text_color=GOLD)
             def worker():
                 try:
-                    city, zip_state, lat, lng = lookup_zip(zip_value)
+                    city, zip_state, lat, lng = (lookup_zip(zip_value) if not online or zip_value != str(user.get("zip") or "")
+                                                  else (user.get("city", ""), state_value, user.get("lat"), user.get("lng")))
                     if zip_state and zip_state.upper() != state_value:
                         result = (False, f"That ZIP code belongs to {zip_state}.")
                     else:
@@ -1420,8 +1434,15 @@ class Gate(ctk.CTkFrame):
                             response = s.server_client.update_profile(s.server_access_token, {
                                 "full_name": values["full_name"].strip(), "state": values["state"], "zip": zip_value,
                                 "bio": values["bio"], "interests": values["interests"], "site": values["website"],
+                                **visibility_values,
                             })
-                            result = (True, "Online profile saved. Your photo is stored on this PC.", response, city, lat, lng)
+                            if avatar["dirty"]:
+                                if avatar["remove"]:
+                                    s.server_client.delete_profile_avatar(s.server_access_token)
+                                elif avatar["path"]:
+                                    s.server_client.upload_profile_avatar(s.server_access_token, avatar["path"])
+                                response = s.server_client.get_profile(s.server_access_token)
+                            result = (True, "Online profile saved.", response, city, lat, lng)
                         else:
                             result = database.update_user_profile(user["username"], values)
                 except Exception as exc: result = (False, f"Could not save the profile: {exc}")
@@ -1497,6 +1518,8 @@ class Gate(ctk.CTkFrame):
         if str((s.user or {}).get("role", "")).lower() == "admin":
             ctk.CTkButton(controls, text="Review reports", width=130, fg_color=CARD, hover_color=HOVER,
                           command=lambda: s.review_community_reports(client, token, dialog)).pack(side="right", padx=4)
+            ctk.CTkButton(controls, text="Hidden content", width=125, fg_color=CARD, hover_color=HOVER,
+                          command=lambda: s.review_hidden_community_content(client, token, dialog)).pack(side="right", padx=4)
         status = ctk.CTkLabel(root, text="Loading discussions…", text_color="#9aa0b5", anchor="w")
         status.pack(fill="x", padx=14, pady=(4, 6))
         posts = ctk.CTkScrollableFrame(root, fg_color="transparent")
@@ -1541,10 +1564,18 @@ class Gate(ctk.CTkFrame):
                          justify="left", anchor="w").pack(fill="x", padx=12, pady=(3, 4))
             actions = ctk.CTkFrame(card, fg_color="transparent")
             actions.pack(fill="x", padx=8, pady=(0, 8))
+            ctk.CTkButton(actions, text="View profile", width=105, height=30, fg_color="#24598a", hover_color="#3278b5",
+                          command=lambda name=post["author"]: s.open_public_profile(client, token, name)).pack(side="left", padx=3)
             ctk.CTkButton(actions, text=f"Open discussion · {post['reply_count']} replies", width=190,
-                          height=30, command=lambda item=post: s.open_community_thread(client, token, item)).pack(side="left", padx=3)
+                          height=30, command=lambda item=post: s.open_community_thread(client, token, item,
+                              (dialog, view, status, category))).pack(side="left", padx=3)
             ctk.CTkButton(actions, text="Report", width=70, height=30, fg_color="transparent", hover_color=HOVER,
                           command=lambda item=post: s.report_community_content(client, token, "post", item["id"])).pack(side="left", padx=3)
+            if str((s.user or {}).get("role", "")).lower() == "admin":
+                ctk.CTkButton(actions, text="Remove", width=80, height=30, fg_color="#812f39", hover_color="#a83b47",
+                              command=lambda item=post: s.moderate_community_content(
+                                  client, token, "post", item["id"], dialog,
+                                  lambda: s.load_community_posts(client, token, dialog, view, status, category))).pack(side="left", padx=3)
 
     def create_community_post_dialog(s, client, token, board, category, category_values, posts, status):
         dialog = ctk.CTkToplevel(s.app)
@@ -1599,7 +1630,7 @@ class Gate(ctk.CTkFrame):
             "Events": "events", "Music": "music", "Movies & TV": "movies_tv", "Games": "games",
             "Sports": "sports", "Festivals": "festivals"}.get(current))
 
-    def open_community_thread(s, client, token, post):
+    def open_community_thread(s, client, token, post, board_context=None):
         dialog = ctk.CTkToplevel(s.app)
         dialog.title(post["title"])
         dialog.geometry("760x680")
@@ -1610,12 +1641,24 @@ class Gate(ctk.CTkFrame):
         panel.pack(fill="both", expand=True, padx=14, pady=14)
         ctk.CTkLabel(panel, text=post["title"], font=("Segoe UI", 20, "bold"), text_color=GOLD,
                      wraplength=680, justify="left").pack(anchor="w", padx=12, pady=(10, 3))
-        ctk.CTkLabel(panel, text=f"{post['category'].replace('_', ' ').title()} · {post['author']} · {str(post['created_at'])[:16]}",
+        ctk.CTkLabel(panel, text=f"{post['category'].replace('_', ' ').title()} · {str(post['created_at'])[:16]}",
                      text_color="#85899a").pack(anchor="w", padx=12)
+        ctk.CTkButton(panel, text=f"Posted by {post['author']} · View profile", width=220, height=26,
+                      fg_color="transparent", hover_color=HOVER,
+                      command=lambda: s.open_public_profile(client, token, post["author"])).pack(anchor="w", padx=8, pady=(2, 0))
         ctk.CTkLabel(panel, text=post["body"], text_color="#d4d7e1", wraplength=680,
                      justify="left", anchor="w").pack(fill="x", padx=12, pady=(8, 10))
         ctk.CTkButton(panel, text="Report discussion", width=150, height=30, fg_color="transparent", hover_color=HOVER,
                       command=lambda: s.report_community_content(client, token, "post", post["id"])).pack(anchor="w", padx=8, pady=(0, 6))
+        if str((s.user or {}).get("role", "")).lower() == "admin":
+            def remove_post_from_thread():
+                callback = None
+                if board_context:
+                    board, board_view, board_status, board_category = board_context
+                    callback = lambda: s.load_community_posts(client, token, board, board_view, board_status, board_category)
+                s.moderate_community_content(client, token, "post", post["id"], dialog, callback)
+            ctk.CTkButton(panel, text="Remove discussion", width=150, height=30, fg_color="#812f39",
+                          hover_color="#a83b47", command=remove_post_from_thread).pack(anchor="w", padx=8, pady=(0, 6))
         replies = ctk.CTkScrollableFrame(panel, fg_color="transparent")
         replies.pack(fill="both", expand=True, padx=6, pady=4)
         reply_box = ctk.CTkTextbox(panel, width=680, height=70)
@@ -1647,13 +1690,131 @@ class Gate(ctk.CTkFrame):
         for reply in data:
             card = ctk.CTkFrame(view, fg_color=CARD, corner_radius=10)
             card.pack(fill="x", padx=5, pady=4)
-            ctk.CTkLabel(card, text=f"{reply['author']} · {str(reply['created_at'])[:16]}",
-                         text_color=GOLD, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(7, 0))
+            ctk.CTkButton(card, text=f"{reply['author']} · {str(reply['created_at'])[:16]} · View profile",
+                          text_color=GOLD, fg_color="transparent", hover_color=HOVER,
+                          font=("Segoe UI", 10, "bold"), height=24, width=300,
+                          command=lambda name=reply["author"]: s.open_public_profile(client, token, name)).pack(anchor="w", padx=6, pady=(5, 0))
             ctk.CTkLabel(card, text=reply["body"], text_color="#cfd3e0", wraplength=640,
                          justify="left", anchor="w").pack(fill="x", padx=10, pady=4)
             ctk.CTkButton(card, text="Report reply", width=100, height=26, fg_color="transparent", hover_color=HOVER,
                           command=lambda item=reply: s.report_community_content(client, token, "reply", item["id"])).pack(anchor="w", padx=6, pady=(0, 4))
+            if str((s.user or {}).get("role", "")).lower() == "admin":
+                ctk.CTkButton(card, text="Remove reply", width=100, height=26, fg_color="#812f39", hover_color="#a83b47",
+                              command=lambda item=reply: s.moderate_community_content(
+                                  client, token, "reply", item["id"], dialog,
+                                  lambda: s.load_community_replies(client, token, dialog, post, view, status))).pack(anchor="w", padx=6, pady=(0, 5))
         status.configure(text=f"{len(data)} replies", text_color="#9aa0b5")
+
+    def open_public_profile(s, client, token, username):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title(f"{username} · Spotlight member")
+        dialog.geometry("460x560")
+        dialog.minsize(400, 460)
+        dialog.configure(fg_color=BG)
+        dialog.transient(s.app)
+        panel = ctk.CTkScrollableFrame(dialog, fg_color=PANEL, corner_radius=14)
+        panel.pack(fill="both", expand=True, padx=16, pady=16)
+        status = ctk.CTkLabel(panel, text="Loading member profile…", text_color="#9aa0b5")
+        status.pack(pady=24)
+        def worker():
+            try:
+                profile = client.get_public_profile(token, username)
+                photo = client.get_public_profile_avatar(token, username) if profile.get("avatar_url") else None
+                result = (True, profile, photo)
+            except Exception as exc:
+                result = (False, str(exc), None)
+            s.app.uiq.put((s.finish_public_profile, (dialog, panel, status, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+
+    def finish_public_profile(s, dialog, panel, status, ok, profile, photo):
+        if not dialog.winfo_exists(): return
+        status.destroy()
+        if not ok:
+            ctk.CTkLabel(panel, text="This member profile could not be loaded.",
+                         font=("Segoe UI", 17, "bold"), text_color="#ff6b6b",
+                         wraplength=390).pack(padx=20, pady=(30, 8))
+            ctk.CTkLabel(panel, text=f"{profile}", text_color="#cfd3e0",
+                         wraplength=390, justify="center").pack(padx=20, pady=5)
+            ctk.CTkLabel(panel, text="The profile service may need to be updated on the SpotLight server.",
+                         text_color="#9aa0b5", wraplength=390, justify="center").pack(padx=20, pady=8)
+            ctk.CTkButton(panel, text="Close", width=120, command=dialog.destroy).pack(pady=18)
+            return
+        if photo:
+            try:
+                with Image.open(BytesIO(photo)) as source:
+                    image = ImageOps.fit(source.convert("RGB"), (144, 144))
+                picture = ctk.CTkImage(light_image=image, dark_image=image, size=(144, 144))
+                s.imgs.append(picture)
+                ctk.CTkLabel(panel, image=picture, text="", corner_radius=72).pack(pady=(20, 8))
+            except Exception:
+                pass
+        ctk.CTkLabel(panel, text=profile.get("display_name") or profile.get("username"),
+                     font=("Segoe UI", 23, "bold"), text_color=GOLD).pack(pady=(12, 3))
+        role = "Administrator" if str(profile.get("role", "")).lower() == "admin" else "Spotlight member"
+        ctk.CTkLabel(panel, text=f"@{profile.get('username', '')}  ·  {role}", text_color="#cfd3e0").pack(pady=2)
+        joined = str(profile.get("created_at", ""))[:10]
+        if joined:
+            ctk.CTkLabel(panel, text=f"Joined {joined}", text_color="#9aa0b5").pack(pady=(2, 10))
+        for key, label in (("state", "Location"), ("bio", "About"), ("interests", "Interests"), ("site", "Website / social")):
+            value = profile.get(key)
+            if value:
+                row = ctk.CTkFrame(panel, fg_color="transparent")
+                row.pack(fill="x", padx=18, pady=4)
+                ctk.CTkLabel(row, text=label, width=115, anchor="w", text_color=GOLD,
+                             font=("Segoe UI", 11, "bold")).pack(side="left", anchor="n")
+                ctk.CTkLabel(row, text=str(value), text_color="#d4d7e1", wraplength=270,
+                             justify="left", anchor="w").pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(panel, text="Close", width=120, command=dialog.destroy).pack(pady=(16, 12))
+
+    def moderate_community_content(s, client, token, target_type, target_id, parent, on_success=None):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("Remove Community content")
+        dialog.geometry("480x300")
+        dialog.configure(fg_color=BG)
+        dialog.transient(parent)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=14, pady=14)
+        ctk.CTkLabel(panel, text="Hide this content from members?", font=("Segoe UI", 18, "bold"),
+                     text_color=GOLD).pack(pady=(14, 5))
+        ctk.CTkLabel(panel, text="The action is recorded for moderation review and can be reversed by an administrator.",
+                     text_color="#9aa0b5", wraplength=400, justify="center").pack(padx=15, pady=5)
+        reason = ctk.CTkEntry(panel, placeholder_text="Reason (optional)", width=390)
+        reason.pack(pady=8)
+        status = ctk.CTkLabel(panel, text="", text_color="#9aa0b5")
+        status.pack(pady=3)
+        button = ctk.CTkButton(panel, text="Hide content", width=150, fg_color="#812f39", hover_color="#a83b47")
+        def submit():
+            button.configure(state="disabled")
+            status.configure(text="Saving moderation action…", text_color=GOLD)
+            reason_text = reason.get().strip()
+            def worker():
+                try:
+                    client.moderate_community_content(token, target_type, target_id, "hide", reason_text)
+                    result = (True, "Content hidden.")
+                except Exception as exc:
+                    result = (False, str(exc))
+                s.app.uiq.put((s.finish_community_content_moderation,
+                               (dialog, parent, status, button, target_type, on_success, *result)))
+            threading.Thread(target=worker, daemon=True).start()
+        button.configure(command=submit)
+        button.pack(pady=5)
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+
+    def finish_community_content_moderation(s, dialog, parent, status, button, target_type, on_success, ok, message):
+        if not dialog.winfo_exists(): return
+        if not ok:
+            status.configure(text=f"Could not hide content: {message}", text_color="#ff6b6b")
+            button.configure(state="normal")
+            return
+        dialog.destroy()
+        if parent.winfo_exists():
+            if target_type == "post" and not str(parent.title()).startswith("Spotlight Community"):
+                parent.destroy()
+                if on_success: on_success()
+            elif on_success:
+                on_success()
+        else: messagebox.showinfo("Spotlight Community", message, parent=parent)
 
     def submit_community_reply(s, client, token, dialog, post, replies, reply_box, button, status):
         body = reply_box.get("1.0", "end-1c").strip()
@@ -1731,6 +1892,61 @@ class Gate(ctk.CTkFrame):
             try: result = (True, client.list_community_reports(token))
             except Exception as exc: result = (False, str(exc))
             s.app.uiq.put((s.finish_community_reports, (dialog, view, status, client, token, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def review_hidden_community_content(s, client, token, board):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("Hidden Community content")
+        dialog.geometry("720x600")
+        dialog.configure(fg_color=BG)
+        dialog.transient(board)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=14, pady=14)
+        ctk.CTkLabel(panel, text="Hidden content", font=("Segoe UI", 21, "bold"), text_color=GOLD).pack(anchor="w", padx=12, pady=(10, 4))
+        status = ctk.CTkLabel(panel, text="Loading…", text_color="#9aa0b5", anchor="w")
+        status.pack(fill="x", padx=12)
+        view = ctk.CTkScrollableFrame(panel, fg_color="transparent")
+        view.pack(fill="both", expand=True, padx=6, pady=6)
+        def worker():
+            try: result = (True, client.list_hidden_community_content(token))
+            except Exception as exc: result = (False, str(exc))
+            s.app.uiq.put((s.finish_hidden_community_content, (dialog, view, status, client, token, board, *result)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_hidden_community_content(s, dialog, view, status, client, token, board, ok, data):
+        if not dialog.winfo_exists(): return
+        for child in view.winfo_children(): child.destroy()
+        if not ok:
+            status.configure(text=f"Could not load hidden content: {data}", text_color="#ff6b6b")
+            return
+        status.configure(text=f"{len(data)} hidden item{'s' if len(data) != 1 else ''}", text_color="#9aa0b5")
+        if not data:
+            ctk.CTkLabel(view, text="There are no hidden discussions or replies.", text_color="#9aa0b5").pack(pady=24)
+            return
+        for item in data:
+            card = ctk.CTkFrame(view, fg_color=CARD, corner_radius=10)
+            card.pack(fill="x", padx=5, pady=5)
+            heading = f"{item['target_type'].title()} · {item.get('author', 'Member')} · {str(item.get('created_at', ''))[:10]}"
+            ctk.CTkLabel(card, text=heading, text_color=GOLD, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(8, 1))
+            ctk.CTkLabel(card, text=item.get("title", ""), text_color="#e7e9f0", font=("Segoe UI", 14, "bold"),
+                         wraplength=620, justify="left", anchor="w").pack(fill="x", padx=10, pady=2)
+            excerpt = item.get("body", "")
+            if len(excerpt) > 220: excerpt = excerpt[:217].rstrip() + "…"
+            ctk.CTkLabel(card, text=excerpt, text_color="#b6bbca", wraplength=620,
+                         justify="left", anchor="w").pack(fill="x", padx=10, pady=2)
+            ctk.CTkButton(card, text="Restore", width=95, height=28, fg_color="#276b48", hover_color="#34885d",
+                          command=lambda record=item: s.restore_community_content(
+                              client, token, dialog, view, status, board, record)).pack(anchor="e", padx=8, pady=(2, 8))
+
+    def restore_community_content(s, client, token, dialog, view, status, board, item):
+        status.configure(text="Restoring content…", text_color=GOLD)
+        def worker():
+            try:
+                client.moderate_community_content(token, item["target_type"], item["id"], "restore")
+                result = (True, client.list_hidden_community_content(token))
+            except Exception as exc:
+                result = (False, str(exc))
+            s.app.uiq.put((s.finish_hidden_community_content, (dialog, view, status, client, token, board, *result)))
         threading.Thread(target=worker, daemon=True).start()
 
     def finish_community_reports(s, dialog, view, status, client, token, ok, reports):

@@ -8,7 +8,13 @@ from app.database import get_db
 from app.dependencies import get_admin_account, get_current_account
 from app.models import Account, AuditLog, CommunityPost, CommunityReply, CommunityReport
 from app.rate_limit import limiter
-from app.schemas import CommunityModerationRequest, CommunityPostCreate, CommunityReplyCreate, CommunityReportCreate
+from app.schemas import (
+    CommunityContentModerationRequest,
+    CommunityModerationRequest,
+    CommunityPostCreate,
+    CommunityReplyCreate,
+    CommunityReportCreate,
+)
 from app.config import settings
 
 router = APIRouter()
@@ -223,3 +229,66 @@ def moderate_community_report(
     ))
     db.commit()
     return {"status": report.status, "action": payload.action}
+
+
+@router.post("/admin/community/content/{target_type}/{target_id}/moderation")
+def moderate_community_content(
+    target_type: str,
+    target_id: str,
+    payload: CommunityContentModerationRequest,
+    account: Account = Depends(get_admin_account),
+    db: DBSession = Depends(get_db),
+):
+    if target_type == "post":
+        model = CommunityPost
+    elif target_type == "reply":
+        model = CommunityReply
+    else:
+        raise HTTPException(status_code=404, detail="Community content not found.")
+    target = db.scalar(select(model).where(model.id == target_id).with_for_update())
+    if target is None:
+        raise HTTPException(status_code=404, detail="Community content not found.")
+    target.hidden = payload.action == "hide"
+    reason = payload.reason.strip() or None
+    db.add(AuditLog(
+        actor_id=account.id,
+        action=f"community_{target_type}.{payload.action}",
+        entity_type=f"community_{target_type}",
+        entity_id=target.id,
+        details=reason,
+    ))
+    db.commit()
+    return {"status": "hidden" if target.hidden else "visible", "target_type": target_type}
+
+
+@router.get("/admin/community/hidden")
+def list_hidden_community_content(
+    limit: int = Query(default=100, ge=1, le=200),
+    account: Account = Depends(get_admin_account),
+    db: DBSession = Depends(get_db),
+):
+    posts = db.execute(
+        select(CommunityPost, Account.username)
+        .join(Account, Account.id == CommunityPost.account_id)
+        .where(CommunityPost.hidden.is_(True))
+        .order_by(CommunityPost.created_at.desc())
+        .limit(limit)
+    ).all()
+    replies = db.execute(
+        select(CommunityReply, Account.username)
+        .join(Account, Account.id == CommunityReply.account_id)
+        .where(CommunityReply.hidden.is_(True))
+        .order_by(CommunityReply.created_at.desc())
+        .limit(limit)
+    ).all()
+    output = [
+        {"target_type": "post", "id": item.id, "title": item.title, "body": item.body,
+         "category": item.category, "author": username, "created_at": item.created_at}
+        for item, username in posts
+    ]
+    output.extend(
+        {"target_type": "reply", "id": item.id, "title": "Reply", "body": item.body,
+         "category": "", "author": username, "created_at": item.created_at}
+        for item, username in replies
+    )
+    return sorted(output, key=lambda item: item["created_at"], reverse=True)[:limit]

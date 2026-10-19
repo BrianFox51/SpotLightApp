@@ -1,5 +1,7 @@
 import json
+import mimetypes
 import os
+import uuid
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -111,6 +113,65 @@ class ServerClient:
             "PATCH", "/me", profile, access_token=access_token
         )
 
+    def upload_profile_avatar(self, access_token: str, file_path: str) -> dict[str, Any]:
+        boundary = uuid.uuid4().hex
+        with open(file_path, "rb") as avatar_file:
+            image_data = avatar_file.read(4 * 1024 * 1024 + 1)
+        if not image_data or len(image_data) > 4 * 1024 * 1024:
+            raise ServerAPIError("Choose an image smaller than 4 MB.")
+        content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="profile-image"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode("ascii") + image_data + f"\r\n--{boundary}--\r\n".encode("ascii")
+        request = Request(
+            f"{self.base_url}/me/avatar",
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=20) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            try:
+                detail = json.loads(error.read().decode("utf-8")).get("detail", error.reason)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                detail = error.reason
+            raise ServerAPIError(str(detail), error.code) from error
+        except (URLError, TimeoutError, OSError) as error:
+            raise ServerAPIError(f"Could not reach the SpotLight server: {error}") from error
+
+    def delete_profile_avatar(self, access_token: str) -> None:
+        self._request("DELETE", "/me/avatar", access_token=access_token)
+
+    def get_public_profile(self, access_token: str, username: str) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/profiles/{quote(username, safe='')}", access_token=access_token
+        )
+
+    def get_public_profile_avatar(self, access_token: str, username: str) -> bytes:
+        request = Request(
+            f"{self.base_url}/profiles/{quote(username, safe='')}/avatar",
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "image/webp"},
+        )
+        try:
+            with urlopen(request, timeout=15) as response:
+                return response.read(100 * 1024 + 1)
+        except HTTPError as error:
+            try:
+                detail = json.loads(error.read().decode("utf-8")).get("detail", error.reason)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                detail = error.reason
+            raise ServerAPIError(str(detail), error.code) from error
+        except (URLError, TimeoutError, OSError) as error:
+            raise ServerAPIError(f"Could not reach the SpotLight server: {error}") from error
+
     def list_favorites(self, access_token: str) -> list[dict[str, Any]]:
         return self._request(
             "GET", "/favorites", access_token=access_token
@@ -188,10 +249,24 @@ class ServerClient:
     def list_community_reports(self, access_token: str) -> list[dict[str, Any]]:
         return self._request("GET", "/admin/community/reports", access_token=access_token)
 
+    def list_hidden_community_content(self, access_token: str) -> list[dict[str, Any]]:
+        return self._request("GET", "/admin/community/hidden", access_token=access_token)
+
     def moderate_community_report(
         self, access_token: str, report_id: str, action: str, reason: str = ""
     ) -> dict[str, Any]:
         return self._request(
             "POST", f"/admin/community/reports/{quote(report_id, safe='')}/moderation",
             {"action": action, "reason": reason}, access_token=access_token,
+        )
+
+    def moderate_community_content(
+        self, access_token: str, target_type: str, target_id: str,
+        action: str = "hide", reason: str = "",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/admin/community/content/{quote(target_type, safe='')}/{quote(target_id, safe='')}/moderation",
+            {"action": action, "reason": reason},
+            access_token=access_token,
         )
