@@ -343,7 +343,7 @@ class Gate(ctk.CTkFrame):
     def show_login(s):
         s.app.hide_favorites_button()
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 0.9.2.1", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 1.1.2.0", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
@@ -1360,7 +1360,7 @@ class Gate(ctk.CTkFrame):
                 "website": server_profile.get("site") or s.user.get("website", ""),
                 "avatar_path": s.user.get("avatar_path") or saved_avatar_path(username),
             })
-        dialog = ctk.CTkToplevel(s.app); dialog.title("Your Spotlight profile"); dialog.geometry("600x720"); dialog.minsize(520, 620); dialog.configure(fg_color=BG); dialog.transient(s.app)
+        dialog = ctk.CTkToplevel(s.app); dialog.title("Your Spotlight profile"); dialog.geometry("600x720"); dialog.minsize(520, 620); dialog.resizable(True, True); dialog.configure(fg_color=BG)
         form = ctk.CTkScrollableFrame(dialog, fg_color=PANEL); form.pack(fill="both", expand=True, padx=16, pady=16)
         ctk.CTkLabel(form, text="Your profile", font=("Segoe UI", 22, "bold"), text_color=GOLD).pack(anchor="w", padx=12, pady=(8, 4))
         profile_note = ("Your name, role, and join date are visible to members. Email and ZIP stay private. Choose which other profile details to share."
@@ -1495,6 +1495,7 @@ class Gate(ctk.CTkFrame):
         dialog.title("Spotlight Community")
         dialog.geometry("940x700")
         dialog.minsize(760, 540)
+        dialog.resizable(True, True)
         dialog.configure(fg_color=BG)
         dialog.transient(s.app)
         root = ctk.CTkFrame(dialog, fg_color=PANEL)
@@ -1584,6 +1585,7 @@ class Gate(ctk.CTkFrame):
         dialog.title("Start a Community discussion")
         dialog.geometry("660x680")
         dialog.minsize(600, 620)
+        dialog.resizable(True, True)
         dialog.configure(fg_color=BG)
         dialog.transient(board)
         panel = ctk.CTkFrame(dialog, fg_color=PANEL)
@@ -1823,10 +1825,24 @@ class Gate(ctk.CTkFrame):
         dialog.title(post["title"])
         dialog.geometry("760x680")
         dialog.minsize(620, 500)
+        dialog.resizable(True, True)
         dialog.configure(fg_color=BG)
-        dialog.transient(s.app)
+        dialog.transient(board_context[0] if board_context else s.app)
         panel = ctk.CTkFrame(dialog, fg_color=PANEL)
         panel.pack(fill="both", expand=True, padx=14, pady=14)
+        # Reserve bottom space for the reply composer before packing the variable-height post content.
+        composer = ctk.CTkFrame(panel, fg_color=CARD, corner_radius=10)
+        composer.pack(side="bottom", fill="x", padx=8, pady=(4, 8))
+        ctk.CTkLabel(composer, text="Write a reply", text_color="#cfd3e0",
+                     font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=(7, 0))
+        reply_box = ctk.CTkTextbox(composer, height=96, wrap="word")
+        reply_box.pack(fill="x", padx=8, pady=(3, 2))
+        status = ctk.CTkLabel(composer, text="", text_color="#9aa0b5")
+        status.pack(anchor="w", padx=10, pady=(0, 2))
+        send = ctk.CTkButton(composer, text="Reply", width=110,
+                             command=lambda: s.submit_community_reply(client, token, dialog, post, replies,
+                                                                      reply_box, send, status))
+        send.pack(anchor="e", padx=8, pady=(0, 8))
         ctk.CTkLabel(panel, text=post["title"], font=("Segoe UI", 20, "bold"), text_color=GOLD,
                      wraplength=680, justify="left").pack(anchor="w", padx=12, pady=(10, 3))
         ctk.CTkLabel(panel, text=f"{post['category'].replace('_', ' ').title()} · {str(post['created_at'])[:16]}",
@@ -1834,7 +1850,9 @@ class Gate(ctk.CTkFrame):
         ctk.CTkButton(panel, text=f"Posted by {post['author']} · View profile", width=220, height=26,
                       fg_color="transparent", hover_color=HOVER,
                       command=lambda: s.open_public_profile(client, token, post["author"])).pack(anchor="w", padx=8, pady=(2, 0))
-        s.render_community_rich_text(panel, post["body"], height=110, wraplength=680).pack(fill="x", padx=12, pady=(8, 4))
+        ctk.CTkLabel(panel, text="Original post", text_color="#cfd3e0",
+                     font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=14, pady=(8, 0))
+        s.render_community_rich_text(panel, post["body"], height=250, wraplength=680).pack(fill="x", padx=12, pady=(3, 4))
         image_frame = ctk.CTkFrame(panel, fg_color="transparent")
         image_frame.pack(fill="x", padx=10, pady=(0, 6))
         s.load_community_post_images(client, token, dialog, post, image_frame)
@@ -1849,18 +1867,12 @@ class Gate(ctk.CTkFrame):
                 s.moderate_community_content(client, token, "post", post["id"], dialog, callback)
             ctk.CTkButton(panel, text="Remove discussion", width=150, height=30, fg_color="#812f39",
                           hover_color="#a83b47", command=remove_post_from_thread).pack(anchor="w", padx=8, pady=(0, 6))
+        ctk.CTkLabel(panel, text="Replies", text_color="#cfd3e0",
+                     font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=14, pady=(4, 0))
         replies = ctk.CTkScrollableFrame(panel, fg_color="transparent")
         replies.pack(fill="both", expand=True, padx=6, pady=4)
-        reply_box = ctk.CTkTextbox(panel, width=680, height=70)
-        reply_box.pack(fill="x", padx=10, pady=(5, 3))
-        status = ctk.CTkLabel(panel, text="", text_color="#9aa0b5")
-        status.pack(anchor="w", padx=12)
-        send = ctk.CTkButton(panel, text="Reply", width=110,
-                             command=lambda: s.submit_community_reply(client, token, dialog, post, replies,
-                                                                      reply_box, send, status))
-        send.pack(anchor="e", padx=10, pady=(3, 8))
         s.load_community_replies(client, token, dialog, post, replies, status)
-        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
+        dialog.after(100, lambda: (dialog.deiconify(), dialog.lift(), dialog.focus_force()))
 
     def load_community_replies(s, client, token, dialog, post, view, status):
         def worker():
@@ -1893,13 +1905,14 @@ class Gate(ctk.CTkFrame):
                               command=lambda item=reply: s.moderate_community_content(
                                   client, token, "reply", item["id"], dialog,
                                   lambda: s.load_community_replies(client, token, dialog, post, view, status))).pack(anchor="w", padx=6, pady=(0, 5))
-        status.configure(text=f"{len(data)} replies", text_color="#9aa0b5")
+        status.configure(text=f"{len(data)} {'reply' if len(data) == 1 else 'replies'}", text_color="#9aa0b5")
 
     def open_public_profile(s, client, token, username):
         dialog = ctk.CTkToplevel(s.app)
         dialog.title(f"{username} · Spotlight member")
         dialog.geometry("460x560")
         dialog.minsize(400, 460)
+        dialog.resizable(True, True)
         dialog.configure(fg_color=BG)
         dialog.transient(s.app)
         panel = ctk.CTkScrollableFrame(dialog, fg_color=PANEL, corner_radius=14)
@@ -2069,6 +2082,7 @@ class Gate(ctk.CTkFrame):
         dialog = ctk.CTkToplevel(s.app)
         dialog.title("Community reports for review")
         dialog.geometry("760x620")
+        dialog.resizable(True, True)
         dialog.configure(fg_color=BG)
         dialog.transient(board)
         panel = ctk.CTkFrame(dialog, fg_color=PANEL)
@@ -2088,6 +2102,7 @@ class Gate(ctk.CTkFrame):
         dialog = ctk.CTkToplevel(s.app)
         dialog.title("Hidden Community content")
         dialog.geometry("720x600")
+        dialog.resizable(True, True)
         dialog.configure(fg_color=BG)
         dialog.transient(board)
         panel = ctk.CTkFrame(dialog, fg_color=PANEL)
