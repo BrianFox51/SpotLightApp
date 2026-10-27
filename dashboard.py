@@ -5,6 +5,7 @@ from io import BytesIO
 from html import escape, unescape
 from html.parser import HTMLParser
 from datetime import datetime
+from urllib.parse import urlsplit
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
@@ -343,7 +344,7 @@ class Gate(ctk.CTkFrame):
     def show_login(s):
         s.app.hide_favorites_button()
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 1.1.3.0", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 1.2.1.0", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
@@ -447,6 +448,18 @@ class Gate(ctk.CTkFrame):
             hover_color=HOVER,
             command=s.guest,
         ).pack(pady=(2, 4))
+
+        ctk.CTkButton(
+            sign_in_form,
+            text="Server connection settings",
+            width=220,
+            height=24,
+            fg_color="transparent",
+            hover_color=HOVER,
+            text_color="#9aa0b5",
+            font=("Segoe UI", 11),
+            command=s.configure_server_connection,
+        ).pack(pady=(0, 4))
 
         login_status_row = ctk.CTkFrame(sign_in_form, fg_color="transparent")
         login_status_row.pack(pady=(0, 4))
@@ -573,6 +586,77 @@ class Gate(ctk.CTkFrame):
             status.configure(text=f"Selected: {os.path.basename(destination)}")
         except Exception as exc:
             status.configure(text=f"Could not load that image: {exc}", text_color="#ff6b6b")
+
+    def configure_server_connection(s):
+        dialog = ctk.CTkToplevel(s.app)
+        dialog.title("SpotLight server connection")
+        dialog.geometry("520x300")
+        dialog.minsize(480, 270)
+        dialog.configure(fg_color=BG)
+        dialog.transient(s.app)
+        dialog.grab_set()
+
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL)
+        panel.pack(fill="both", expand=True, padx=18, pady=18)
+        ctk.CTkLabel(
+            panel,
+            text="Server connection",
+            font=("Segoe UI", 19, "bold"),
+            text_color=GOLD,
+        ).pack(pady=(14, 5))
+        ctk.CTkLabel(
+            panel,
+            text="This address connects online accounts and Community to the SpotLight server. "
+                 "Guest and local profiles continue to work without it. Include /api/v1 at the end.",
+            text_color="#9aa0b5",
+            wraplength=440,
+            justify="center",
+        ).pack(padx=16, pady=(0, 10))
+
+        address = ctk.CTkEntry(panel, width=430, placeholder_text="http://server-address:8001/api/v1")
+        address.pack(pady=5)
+        address.insert(0, ServerClient.configured_base_url())
+        result = ctk.CTkLabel(panel, text="", text_color="#ff6b6b", wraplength=430)
+        result.pack(pady=4)
+
+        def save_address():
+            value = address.get().strip().rstrip("/")
+            parsed = urlsplit(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                result.configure(text="Enter a complete address starting with http:// or https://.")
+                return
+            if not parsed.path.rstrip("/").endswith("/api/v1"):
+                result.configure(text="The address must end in /api/v1.")
+                return
+            cfg = events.load_cfg()
+            cfg["server_api_base_url"] = value
+            try:
+                events.save_cfg(cfg)
+            except OSError as exc:
+                result.configure(text=f"Could not save the server address: {exc}")
+                return
+            result.configure(text="Server address saved for this Windows account.", text_color="#77d18b")
+
+        def use_default():
+            cfg = events.load_cfg()
+            cfg.pop("server_api_base_url", None)
+            try:
+                events.save_cfg(cfg)
+            except OSError as exc:
+                result.configure(text=f"Could not restore the default address: {exc}")
+                return
+            address.delete(0, "end")
+            address.insert(0, ServerClient.configured_base_url())
+            result.configure(text="Using the app’s default server address.", text_color="#77d18b")
+
+        buttons = ctk.CTkFrame(panel, fg_color="transparent")
+        buttons.pack(pady=(8, 12))
+        ctk.CTkButton(buttons, text="Save address", width=150, command=save_address).pack(side="left", padx=5)
+        ctk.CTkButton(
+            buttons, text="Use app default", width=150, fg_color=CARD, hover_color=HOVER,
+            command=use_default,
+        ).pack(side="left", padx=5)
+        dialog.after(50, lambda: (dialog.lift(), dialog.focus_force()))
 
     def recover_account(s, mode):
         try:

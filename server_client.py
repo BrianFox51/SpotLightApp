@@ -2,6 +2,8 @@ import json
 import mimetypes
 import os
 import uuid
+
+import events
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -14,18 +16,27 @@ class ServerAPIError(RuntimeError):
         self.status_code = status_code
 
 
+DEFAULT_API_BASE_URL = "http://192.168.1.151:8001/api/v1"
+
+
 class ServerClient:
     """Client for the optional SpotLight server API."""
 
+    @staticmethod
+    def configured_base_url() -> str:
+        """Use the saved app setting, development override, or home-beta default."""
+        cfg = events.load_cfg()
+        return str(
+            cfg.get("server_api_base_url")
+            or os.environ.get("SPOTLIGHT_API_BASE_URL", "")
+            or DEFAULT_API_BASE_URL
+        ).strip().rstrip("/")
+
     def __init__(self, base_url: str | None = None):
-        self.base_url = (
-            base_url or os.environ.get("SPOTLIGHT_API_BASE_URL", "")
-        ).rstrip("/")
+        self.base_url = (base_url or self.configured_base_url()).rstrip("/")
 
         if not self.base_url:
-            raise ServerAPIError(
-                "Set SPOTLIGHT_API_BASE_URL before connecting to the server."
-            )
+            raise ServerAPIError("No SpotLight server address is configured.")
 
     def _request(
         self,
