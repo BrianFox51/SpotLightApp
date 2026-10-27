@@ -139,3 +139,7 @@ Run database migrations during a planned update before opening the app to users.
 - [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel) for public exposure; review its public-access behavior before use
 - [Spotlight architecture](architecture.md)
 - [Spotlight maintainer guide](maintainer-guide.md)
+
+### Shared TMDB catalog
+
+The authenticated `/api/v1/admin/catalog/tmdb/refresh` action is admin-only and rate-limited. It reads the encrypted TMDB key on the server, fetches the current U.S. movie and on-air TV pages over HTTPS, and persists only changed provider cards. Signed-in desktop clients request changes after their local cursor; the client stores the cursor only after its local SQLite write succeeds. The desktop cache remains the offline source. Provider failures are returned without logging or echoing the key.

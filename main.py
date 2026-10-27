@@ -1745,31 +1745,63 @@ class App(ctk.CTk):
         self.publish_dashboard_update(message)
         if say: say(message)
     def sync_tmdb(self, say, token, status_callback=None, on_complete=None):
-        """Refresh the movie and on-air TV catalogs from TMDB in the background."""
+        """Use the shared server TMDB delta when signed in; keep local-key fallback."""
         done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
-        if not token:
-            if status_callback: status_callback("tmdb_key", "not_set", "TMDB key not set.")
-            say("TMDB key not set. Other configured sources will still refresh."); done("skipped"); return
         say("Updating currently playing movies and on-air TV from TMDB…")
+
         def work():
-            try:
-                catalogs = online.tmdb_catalog(token)
-            except urllib.error.HTTPError as exc:
-                message = "TMDB rejected the token. Check it in the TMDB key field and try again." if exc.code in (401, 403) else f"TMDB update failed (HTTP {exc.code})."
-                if status_callback: status_callback("tmdb_key", "bad", message)
-                self.uiq.put((say, (message,))); done("failed"); return
-            except Exception as exc:
-                if status_callback: status_callback("tmdb_key", "bad", f"TMDB unavailable: {exc}")
-                self.uiq.put((say, (f"TMDB update failed: {exc}",))); done("failed"); return
+            catalogs = None
+            server_cursor = None
+            used_server = False
+            gate = getattr(self, "gate", None)
+            client = getattr(gate, "server_client", None)
+            access_token = getattr(gate, "server_access_token", None)
+            is_admin = str((getattr(gate, "user", None) or {}).get("role", "")).lower() == "admin"
+            server_error = None
+
+            if client and access_token:
+                try:
+                    if is_admin:
+                        client.refresh_tmdb_catalog(access_token)
+                    cfg = events.load_cfg()
+                    cursor = int(cfg.get("tmdb_server_cursor", 0) or 0)
+                    response = client.get_tmdb_catalog(access_token, cursor)
+                    if response.get("available"):
+                        catalogs = response.get("catalogs") or {"movies": [], "tv": []}
+                        server_cursor = int(response.get("cursor", cursor) or cursor)
+                        used_server = True
+                except Exception as exc:
+                    server_error = exc
+
+            if not used_server and token:
+                try:
+                    catalogs = online.tmdb_catalog(token)
+                    server_cursor = None
+                except Exception as exc:
+                    if status_callback:
+                        status_callback("tmdb_key", "bad", f"TMDB update failed: {exc}")
+                    self.uiq.put((say, (f"TMDB update failed: {exc}",)))
+                    done("failed")
+                    return
+            elif not used_server:
+                message = str(server_error or "The shared TMDB catalog is not ready yet; a server administrator must configure its key and refresh it.")
+                if status_callback:
+                    status_callback("tmdb_key", "bad" if server_error else "not_set", message)
+                self.uiq.put((say, (message + " Saved cards remain available.",)))
+                done("failed" if server_error else "skipped")
+                return
+
             for cat in ("movies", "tv"):
                 for result in catalogs.get(cat, []):
                     poster_path = os.path.join(POSTERS, slug(result["title"]) + ".jpg")
-                    if result["poster"] and not os.path.exists(poster_path):
+                    if result.get("poster") and not os.path.exists(poster_path):
                         try: online._save(result["poster"], poster_path)
                         except Exception: pass
-            if status_callback: status_callback("tmdb_key", "ok", "TMDB connection working.")
-            self.uiq.put((self.apply_tmdb, (catalogs, say)))
+            if status_callback:
+                status_callback("tmdb_key", "ok", "TMDB cards synchronized from the shared server." if used_server else "TMDB connection working with the local key.")
+            self.uiq.put((self.apply_tmdb, (catalogs, say, server_cursor)))
             done("success")
+
         threading.Thread(target=work, daemon=True).start()
 
     def sync_watchmode(self, say, key, status_callback=None, on_complete=None):
@@ -1957,7 +1989,7 @@ class App(ctk.CTk):
         if self.cat in {"movies", "tv"} and self.sel is None and not dashboard_visible:
             self.items = self.load_catalog_items(self.cat); self.show_genres()
         self.publish_dashboard_update(message)
-    def apply_tmdb(self, catalogs, say=None):
+    def apply_tmdb(self, catalogs, say=None, server_cursor=None):
         now = int(time.time()); added = {"movies": 0, "tv": 0}; updated = {"movies": 0, "tv": 0}; media_rows = []
         for cat in ("movies", "tv"):
             existing = {g(item, "title").casefold(): item for item in self.load_catalog_items(cat) if not self.is_watchmode_item(item, cat)}
@@ -1977,9 +2009,16 @@ class App(ctk.CTk):
                 metadata.update({"genre": result["genre"], "tmdb_id": result["id"], "tmdb_url": result["url"], "tmdb_catalog": True, "tmdb_catalog_updated": now})
                 for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
         database.save_media_items(media_rows, guest_cache=self.is_guest_session())
+        if server_cursor is not None:
+            cfg = events.load_cfg()
+            cfg["tmdb_server_cursor"] = int(server_cursor)
+            events.save_cfg(cfg)
         self.meta.save()
         movie_total = len(self.load_catalog_items("movies")); tv_total = len(self.load_catalog_items("tv"))
-        details = f"TMDB updated: {added['movies']} new movies, {updated['movies']} refreshed; {added['tv']} new TV shows, {updated['tv']} refreshed."
+        if server_cursor is not None and not media_rows:
+            details = "TMDB shared catalog is up to date; no changed cards needed downloading."
+        else:
+            details = f"TMDB updated: {added['movies']} new movies, {updated['movies']} refreshed; {added['tv']} new TV shows, {updated['tv']} refreshed."
         if say: say(f"{details} Current catalog totals: {movie_total} movies, {tv_total} TV shows.")
         self.publish_dashboard_update(f"{details} Full cast, trailers, and extended details load when you open a title.")
     def open_buy(self):

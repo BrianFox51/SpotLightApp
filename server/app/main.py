@@ -14,6 +14,7 @@ from app.favorites import router as favorites_router
 from app.submissions import router as submissions_router
 from app.profile import router as profile_router
 from app.community import router as community_router
+from app.catalog import router as catalog_router
 from app.rate_limit import limiter
 from app.config import settings
 from app.database import Base, SessionLocal, engine
@@ -39,6 +40,7 @@ app.include_router(submissions_router, prefix="/api/v1", tags=["submissions"])
 app.include_router(moderation_router, prefix="/api/v1", tags=["moderation"])
 app.include_router(profile_router, prefix="/api/v1", tags=["profile"])
 app.include_router(community_router, prefix="/api/v1", tags=["community"])
+app.include_router(catalog_router, prefix="/api/v1", tags=["catalog"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

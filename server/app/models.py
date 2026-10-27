@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 def _utcnow() -> datetime:
@@ -169,6 +169,20 @@ class ProviderSecretVersion(Base):
     change_note: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     actor_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("accounts.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+class ProviderCatalogItem(Base):
+    """Latest server-fetched provider card; clients receive only changed rows."""
+    __tablename__ = "provider_catalog_items"
+    __table_args__ = (
+        UniqueConstraint("provider", "category", "provider_id", name="uq_provider_catalog_item"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(40), nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at_ms: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
 class CommunityPost(Base):
     __tablename__ = "community_posts"

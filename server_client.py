@@ -44,6 +44,7 @@ class ServerClient:
         path: str,
         payload: dict[str, Any] | None = None,
         access_token: str | None = None,
+        timeout: int = 10,
     ) -> Any:
         headers = {"Accept": "application/json"}
         body = None
@@ -63,7 +64,7 @@ class ServerClient:
         )
 
         try:
-            with urlopen(request, timeout=10) as response:
+            with urlopen(request, timeout=timeout) as response:
                 raw = response.read()
                 if not raw:
                     return None
@@ -83,6 +84,16 @@ class ServerClient:
             raise ServerAPIError(
                 "The server returned an invalid response."
             ) from error
+
+    def get_tmdb_catalog(self, access_token: str, since: int = 0) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/catalog/tmdb?since={max(0, int(since))}", access_token=access_token
+        )
+
+    def refresh_tmdb_catalog(self, access_token: str) -> dict[str, Any]:
+        return self._request(
+            "POST", "/admin/catalog/tmdb/refresh", access_token=access_token, timeout=75
+        )
 
     def register(
         self, email: str, username: str, password: str
