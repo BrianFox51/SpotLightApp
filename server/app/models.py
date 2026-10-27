@@ -155,6 +155,21 @@ class PasswordResetChallenge(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+class ProviderSecretVersion(Base):
+    """Encrypted, append-only history for server-owned provider credentials."""
+    __tablename__ = "provider_secret_versions"
+    __table_args__ = (
+        UniqueConstraint("provider", "version", name="uq_provider_secret_version"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    ciphertext: Mapped[str | None] = mapped_column(Text)
+    fingerprint: Mapped[str | None] = mapped_column(String(16))
+    change_note: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("accounts.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
 class CommunityPost(Base):
     __tablename__ = "community_posts"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
