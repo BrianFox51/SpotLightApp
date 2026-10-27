@@ -4,16 +4,16 @@
 
 Track the desktop app's integration with the optional SpotLight backend, including which behavior is implemented and which remains local or planned. Update this file whenever an API field, identity mapping, sign-in flow, or data ownership rule changes.
 
-## Current status (2026-10-18)
+## Current status (2026-10-27)
 
 - The desktop app can sign in to the optional SpotLight server using either an account username or email plus password.
-- The client reads its API base URL from `SPOTLIGHT_API_BASE_URL`; it must include `/api/v1`. Keep any personal Tailscale address in local configuration, not public source.
+- The client uses the home-beta API address by default. **Server connection settings** on the sign-in screen can save a different address for the current Windows account; a saved address takes priority over the development-only `SPOTLIGHT_API_BASE_URL` override. Addresses must include `/api/v1`.
 - A successful server sign-in retrieves `GET /me` and holds access and refresh tokens in memory for the current app session.
 - The desktop Create Profile tab now offers separate **Create online account** and **Create local profile** actions. Online creation calls `POST /auth/register`, signs in, and sends the entered profile fields to `PATCH /me` on a background worker. It then opens the dashboard with the server session active. Local creation continues to use SQLite and remains available offline.
 - Server account passwords require at least 12 characters; local profiles continue to require at least 6. Choosing online creation does not silently fall back to local creation when the server is unavailable. Online profile photos are optimized to WebP and stored on the server at no more than 100 KB.
 - The profile image on the dashboard opens the profile editor. Online profile fields and sharing preferences are saved with `PATCH /me`; account email and ZIP remain private. Members can choose whether to share their photo, state, bio, interests, or site. Name, role, and join date are always visible to signed-in community members.
 - If registration succeeds but the follow-up sign-in or profile save fails, the app reports that the online account was created and directs the user to sign in; it does not pretend that local creation succeeded.
-- If server sign-in fails but the same credentials match a local account, the app falls back to local sign-in. Guest access remains available.
+- A local profile can sign in on this PC without the server. After a successful online sign-in, the **Remember me** option can save a salted password verifier and limited profile snapshot in the local SQLite database for same-PC offline sign-in. This offline session has no server token and receives no online or administrator privileges. The cached verifier is not used when the server responds with an authentication rejection; a successful server password reset clears the offline snapshot. Guest access remains available.
 - Favorites in the desktop app remain local SQLite records. The server client has favorites API methods, but the UI does not call them and no local-to-server favorite mapping or sync is implemented.
 - The dashboard's six category count tiles open their matching category views, and the account-specific Favorites tile and in-app Favorites button open a dedicated Favorites list. Guest activation shows the registration prompt. Favorite items remain tied to the current local username.
 - Server sign-out currently clears the desktop session; it does not call the API revoke endpoint. The refresh token is not persisted or used to restore a server session after restarting the app.
@@ -27,14 +27,14 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 
 - `dashboard.Gate.do_login` checks local credentials and attempts server sign-in on a background thread.
 - Server login sends `identifier` and `password` to `POST /auth/login`, then uses the returned access token for `GET /me`.
-- On a successful server login, the desktop stores the access and refresh tokens only in memory. The optional Remember password setting stores the entered password using Windows DPAPI for the current Windows user; it does not persist the refresh token.
-- A local profile is used if server access is unavailable or rejects the account and local verification succeeds. The status message distinguishes local fallback from server sign-in.
+- On a successful server login, the desktop stores access and refresh tokens only in memory. When Remember me is enabled, Windows DPAPI protects the optional autofill password, and SQLite separately stores a salted verifier plus a limited profile for offline sign-in. No refresh token is saved to disk.
+- Local profiles remain separate from online accounts and may sign in locally. For an online account, **Remember me** controls a same-PC offline credential snapshot; it stores a per-account salted verifier and a limited profile, not the server token or administrator role. The snapshot is used only if the server is unreachable, never when the server rejects the credentials. Unchecking Remember me removes the local offline verifier.
 - **Create local profile** writes a profile to the local SQLite database and remains available offline.
 - **Create online account** calls `POST /auth/register`, signs in, and updates the server profile with the entered name, state, ZIP, bio, interests, and site. These network calls run on a background worker. The app then opens the dashboard with server tokens held in memory for the session. A selected photo is uploaded and compressed to WebP, capped at 100 KB in server storage.
 - Clicking the dashboard profile image opens the profile editor. For online accounts, editable profile fields and visibility preferences are sent to `PATCH /me`; email remains read-only and ZIP is never included on public profile cards. Members can share or hide each optional field. Online photos are stored on the server and can be removed from the editor.
 - Online signup enforces the server's 12-character password minimum and username format. Local profile creation retains its 6-character minimum. Online signup failure never silently creates a local-only account.
 - Guest mode has no account identity and cannot use the Favorites star; selecting it shows the registration prompt.
-- Username and password recovery use the local database and require the local profile's email and ZIP code. Password reset changes only the local profile password.
+- Local-profile recovery uses the local database and requires that profile's email and ZIP code. Server-account recovery uses the server and email codes; successful server password recovery removes that account's offline verifier from this PC. Local and server passwords remain independent.
 
 ### Favorites
 

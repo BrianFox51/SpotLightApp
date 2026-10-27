@@ -27,4 +27,4 @@ The build environment and output are excluded from Git. They do not belong in a 
 4. Create a tag such as `v1.1.2.0` on the current `main` branch. Set the release title to `SpotLightApp Beta 1.1.2.0`.
 5. Add `Output\SpotLightApp-Setup-1.1.2.0.exe` to the release assets, write concise beta notes, then publish the release.
 
-The installer contains the desktop app and tracked media assets, not user profiles, local databases, API credentials, or the server `.env`. The app connects to the server only when `SPOTLIGHT_API_BASE_URL` is set on the computer running it. A tester outside the configured home network/Tailscale may not be able to use server-backed account and Community features.
+The installer contains the desktop app and tracked media assets, not user profiles, local databases, API credentials, or the server `.env`. The app uses the home-beta server address by default; testers can change it through **Server connection settings** on the sign-in screen without editing Windows environment variables. The home-beta address works only on the configured home network. Before sharing outside that network, move the API to the public domain with HTTPS.

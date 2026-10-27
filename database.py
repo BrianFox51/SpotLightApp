@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import hashlib
+import hmac
 import json
 import time
 
@@ -92,6 +93,19 @@ def init_db():
         CREATE TABLE IF NOT EXISTS favorites (
             username TEXT NOT NULL, media_id TEXT NOT NULL, created INTEGER NOT NULL,
             PRIMARY KEY (username, media_id)
+        )
+    """)
+
+    # An online account may sign in offline on this PC after one successful
+    # server authentication. Store only a salted verifier and a minimal profile.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS server_offline_accounts (
+            username TEXT PRIMARY KEY,
+            email TEXT NOT NULL DEFAULT '',
+            salt TEXT NOT NULL,
+            pw_hash TEXT NOT NULL,
+            profile_json TEXT NOT NULL,
+            last_verified INTEGER NOT NULL
         )
     """)
 
@@ -337,6 +351,91 @@ def verify_user(username, password):
         if r and _hash(password, r["salt"]) == r["pw_hash"]: return dict(r)
         return None
     finally: conn.close()
+
+def cache_server_account(username, email, password, profile):
+    """Cache a minimal account and salted password verifier for same-PC offline sign-in."""
+    username = str(username or "").strip()
+    key = username.lower()
+    email = str(email or "").strip()
+    if not key or not password:
+        return False
+
+    # Never copy server tokens, provider credentials, or moderator/admin rights locally.
+    cached_profile = {
+        "username": username,
+        "display_name": str(profile.get("display_name") or username),
+        "email": email,
+        "full_name": str(profile.get("full_name") or ""),
+        "city": str(profile.get("city") or ""),
+        "state": str(profile.get("state") or ""),
+        "zip": str(profile.get("zip") or ""),
+        "bio": str(profile.get("bio") or ""),
+        "interests": str(profile.get("interests") or ""),
+        "website": str(profile.get("website") or ""),
+        "avatar_path": str(profile.get("avatar_path") or ""),
+        "role": "user",
+        "offline_session": True,
+    }
+    salt = os.urandom(16).hex()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            """INSERT INTO server_offline_accounts
+                (username, email, salt, pw_hash, profile_json, last_verified)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(username) DO UPDATE SET
+                    email=excluded.email, salt=excluded.salt, pw_hash=excluded.pw_hash,
+                    profile_json=excluded.profile_json, last_verified=excluded.last_verified""",
+            (key, email, salt, _hash(password, salt), json.dumps(cached_profile), int(time.time())),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def forget_cached_server_account(identifier):
+    """Remove same-PC offline sign-in for a server account by username or email."""
+    lookup = str(identifier or "").strip().lower()
+    if not lookup:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "DELETE FROM server_offline_accounts WHERE lower(username)=? OR lower(email)=?",
+            (lookup, lookup),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def verify_cached_server_account(identifier, password):
+    """Validate a cached account; the login flow uses it only when the server is unreachable."""
+    lookup = str(identifier or "").strip().lower()
+    if not lookup or not password:
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """SELECT * FROM server_offline_accounts
+               WHERE lower(username)=? OR lower(email)=? LIMIT 1""",
+            (lookup, lookup),
+        ).fetchone()
+        if not row or not hmac.compare_digest(_hash(password, row["salt"]), row["pw_hash"]):
+            return None
+        try:
+            profile = json.loads(row["profile_json"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        profile["role"] = "user"
+        profile["offline_session"] = True
+        profile["offline_last_verified"] = row["last_verified"]
+        return profile
+    finally:
+        conn.close()
+
 
 def get_user(username):
     """Load a local account profile by username."""

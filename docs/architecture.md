@@ -4,7 +4,7 @@
 
 1. `main.py` imports the application modules, sets up project-relative media folders, defines category and display helpers, and defines the `App` window.
 2. `App.__init__` loads display metadata, seeds demo catalog entries once, builds the interface, starts background connection monitoring, and creates the sign-in/dashboard gate.
-3. `dashboard.Gate` handles guest access, separate online account registration and local profile creation, server-first sign-in with local-account fallback, account recovery, profile display/editing, dashboard statistics, API credential editing/status, and the combined Refresh action. Server registration, sign-in, profile retrieval, public member profiles, profile photo upload, and profile updates use `server_client.py`. The dashboard still requires manual refresh; automatic refresh and interactive statistic quick links are planned.
+3. `dashboard.Gate` handles guest access, separate online account registration and local profile creation, server-first sign-in, optional same-PC offline sign-in for previously verified online accounts, account recovery, profile display/editing, dashboard statistics, API credential editing/status, and the combined Refresh action. Server registration, sign-in, profile retrieval, public member profiles, profile photo upload, and profile updates use `server_client.py`. The dashboard still requires manual refresh; automatic refresh and interactive statistic quick links are planned.
 4. The catalog is read from SQLite through `database.py`. Selecting a title displays its local metadata, cast/crew, events, and notes. Spotlight Search stays available above the content and searches saved catalog fields across all categories or the current category.
 5. `online.py` retrieves missing details in background threads. It also syncs TMDB theatrical/airing catalogs and a bounded Watchmode U.S. streaming catalog; per-title Watchmode provider links are requested on demand. `main.py` returns results to the UI thread through a queue.
 6. `events.py` syncs Ticketmaster events; `community.py` syncs an optional organizer feed. The `promote.py` form lets an organizer prepare a submission for curator review.
@@ -17,7 +17,7 @@ The application entry point and primary UI controller. It owns navigation, media
 
 ### `database.py`
 
-Creates and accesses SQLite tables for media items, cast/crew, local events, users, and local favorites. It also hashes local passwords, saves notes, and provides catalog/dashboard queries. Dashboard counts currently sum catalog rows by database category; the state-specific dashboard value currently counts local events despite its “Titles in [state]” label. See `docs/frontend-backend-integration.md` for the count/cache audit and ownership rules. The database is stored under the current user's `.spotlight` directory, not beside the Python files.
+Creates and accesses SQLite tables for media items, cast/crew, local events, local users, locally cached offline credentials for previously verified server accounts, and local favorites. It hashes passwords with per-account salts, saves notes, and provides catalog/dashboard queries. Dashboard counts currently sum catalog rows by database category; the state-specific dashboard value currently counts local events despite its “Titles in [state]” label. See `docs/frontend-backend-integration.md` for the count/cache audit and ownership rules. The database is stored under the current user's `.spotlight` directory, not beside the Python files.
 
 ### `dashboard.py`
 
@@ -25,7 +25,7 @@ Implements the sign-in/create-account/guest screen and the dashboard shown after
 
 ### `server_client.py`
 
-Small HTTP client for the optional backend. Reads `SPOTLIGHT_API_BASE_URL`, sends JSON or multipart requests, attaches bearer access tokens for protected calls, and translates HTTP/network failures into `ServerAPIError`. The desktop uses account registration/login, profile retrieval/update and visibility controls, public profile/photo retrieval, Community discussions, reports, and admin moderation; token refresh/revocation and server favorites methods are not yet wired to the UI.
+Small HTTP client for the optional backend. Reads a saved server address from `~/.spotlight/config.json`, uses the home-beta default when none is saved, and accepts `SPOTLIGHT_API_BASE_URL` as a development override. It sends JSON or multipart requests, attaches bearer access tokens for protected calls, and translates HTTP/network failures into `ServerAPIError`. The desktop uses account registration/login, profile retrieval/update and visibility controls, public profile/photo retrieval, Community discussions, reports, and admin moderation; token refresh/revocation and server favorites methods are not yet wired to the UI.
 
 ### `online.py`
 

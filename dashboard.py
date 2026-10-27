@@ -344,7 +344,7 @@ class Gate(ctk.CTkFrame):
     def show_login(s):
         s.app.hide_favorites_button()
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 1.2.1.0", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 1.2.2.1", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
@@ -430,7 +430,7 @@ class Gate(ctk.CTkFrame):
 
         ctk.CTkCheckBox(
             sign_in_form,
-            text="Remember password on this PC (securely)",
+            text="Remember me on this PC (offline sign-in enabled)",
             variable=remember,
         ).pack(anchor="w", padx=70, pady=(2, 2))
 
@@ -746,10 +746,10 @@ class Gate(ctk.CTkFrame):
                 outcome = (True, response.get("message", "Password reset. Sign in with your new password."))
             except Exception as exc:
                 outcome = (False, str(exc))
-            s.app.uiq.put((s.finish_password_recovery, (dialog, button, result, *outcome)))
+            s.app.uiq.put((s.finish_password_recovery, (dialog, button, result, email_value, *outcome)))
         threading.Thread(target=worker, daemon=True).start()
 
-    def finish_password_recovery(s, dialog, button, result, ok, message):
+    def finish_password_recovery(s, dialog, button, result, email, ok, message):
         try:
             if not dialog.winfo_exists(): return
             button.configure(state="normal")
@@ -758,6 +758,7 @@ class Gate(ctk.CTkFrame):
                 cfg = events.load_cfg()
                 cfg.pop("remembered_password_dpapi", None)
                 events.save_cfg(cfg)
+                database.forget_cached_server_account(email)
         except Exception:
             pass
 
@@ -822,6 +823,9 @@ class Gate(ctk.CTkFrame):
             return
 
         local_user = database.verify_user(identifier, p)
+        cached_server_user = database.verify_cached_server_account(identifier, p) if remember else None
+        if not remember:
+            database.forget_cached_server_account(identifier)
         s.login_err.configure(text="Please wait while the system updates", text_color="#c9a45c")
         s.login_wait_started = time.monotonic()
         s.update_in_progress = True
@@ -845,18 +849,18 @@ class Gate(ctk.CTkFrame):
 
             s.app.uiq.put((
                 s.finish_login,
-                (identifier, p, remember, local_user, client, tokens, profile, error),
+                (identifier, p, remember, local_user, cached_server_user, client, tokens, profile, error),
             ))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def finish_login(s, identifier, password, remember, local_user, client, tokens, profile, error):
+    def finish_login(s, identifier, password, remember, local_user, cached_server_user, client, tokens, profile, error):
         wait_started = getattr(s, "login_wait_started", None)
         if wait_started is not None:
             remaining_ms = max(0, 700 - int((time.monotonic() - wait_started) * 1000))
             if remaining_ms:
                 s.after(remaining_ms, lambda: s.finish_login(
-                    identifier, password, remember, local_user, client, tokens, profile, error
+                    identifier, password, remember, local_user, cached_server_user, client, tokens, profile, error
                 ))
                 return
             s.login_wait_started = None
@@ -886,6 +890,18 @@ class Gate(ctk.CTkFrame):
             s.server_access_token = tokens.get("access_token")
             s.server_refresh_token = tokens.get("refresh_token")
             s.user = user
+            try:
+                if remember:
+                    database.cache_server_account(
+                        profile.get("username", identifier),
+                        profile.get("email", ""),
+                        password,
+                        user,
+                    )
+                else:
+                    database.forget_cached_server_account(identifier)
+            except Exception:
+                pass
             s.remember_credentials(identifier, password, remember)
             s.show_dashboard(status="Signed in to the SpotLight server.")
             return
@@ -903,6 +919,20 @@ class Gate(ctk.CTkFrame):
                 status = "Signed in on this PC; the server is unavailable, so online features are off."
 
             s.show_dashboard(status=status)
+            return
+
+        # Cached online accounts work only when the server cannot be reached.
+        # A server rejection (such as a wrong or reset password) must not be
+        # bypassed by an older local verifier.
+        if cached_server_user and error is not None and getattr(error, "status_code", None) is None:
+            s.server_client = None
+            s.server_access_token = None
+            s.server_refresh_token = None
+            s.user = cached_server_user
+            s.remember_credentials(identifier, password, remember)
+            s.show_dashboard(
+                status="Signed in offline on this PC. Online features are unavailable; saved cards remain available."
+            )
             return
 
         if getattr(error, "status_code", None) == 401:
@@ -1020,6 +1050,15 @@ class Gate(ctk.CTkFrame):
             "website": server_profile.get("site") or "",
             "avatar_path": avatar_path or "",
         }
+        try:
+            database.cache_server_account(
+                profile.get("username", username),
+                profile.get("email", ""),
+                password,
+                s.user,
+            )
+        except Exception:
+            pass
         s.remember_credentials(username, password, True)
         s.show_dashboard(status="Online Spotlight account created and signed in.")
 
