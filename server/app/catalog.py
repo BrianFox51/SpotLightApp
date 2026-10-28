@@ -8,6 +8,7 @@ from app.dependencies import get_admin_account, get_current_account
 from app.models import Account
 from app.provider_catalog import ProviderCatalogError, refresh_tmdb, tmdb_delta
 from app.ticketmaster_catalog import refresh_ticketmaster, ticketmaster_delta
+from app.watchmode_catalog import refresh_watchmode, watchmode_delta, watchmode_sources
 from app.schemas import TicketmasterCatalogRefreshRequest
 from app.rate_limit import limiter
 from app.config import settings
@@ -63,5 +64,41 @@ def refresh_ticketmaster_catalog(
         return refresh_ticketmaster(db, account, state_code=payload.state_code,
                                     latitude=payload.latitude, longitude=payload.longitude,
                                     radius=payload.radius)
+    except ProviderCatalogError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+
+
+@router.get("/catalog/watchmode")
+def get_watchmode_catalog(
+    since: int = Query(default=0, ge=0),
+    account: Account = Depends(get_current_account),
+    db: DBSession = Depends(get_db),
+):
+    return watchmode_delta(db, since)
+
+
+@router.post("/admin/catalog/watchmode/refresh")
+@limiter.limit(settings.rate_limit_provider_refresh)
+def refresh_watchmode_catalog(
+    request: Request,
+    account: Account = Depends(get_admin_account),
+    db: DBSession = Depends(get_db),
+):
+    try:
+        return refresh_watchmode(db, account)
+    except ProviderCatalogError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+
+
+@router.get("/catalog/watchmode/{title_id}/sources")
+@limiter.limit(settings.rate_limit_provider_lookup)
+def get_watchmode_sources(
+    request: Request,
+    title_id: str,
+    account: Account = Depends(get_current_account),
+    db: DBSession = Depends(get_db),
+):
+    try:
+        return watchmode_sources(db, title_id)
     except ProviderCatalogError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None

@@ -1520,10 +1520,21 @@ class App(ctk.CTk):
         if meta.get("watchmode_sources") is not None and time.time() - checked < 30 * 86400: return
         if time.time() - float(meta.get("watchmode_sources_try", 0) or 0) < 60: return
         key = events.load_cfg().get("watchmode_key", "")
-        if not key: return
+        gate = getattr(self, "gate", None)
+        client = getattr(gate, "server_client", None)
+        access_token = getattr(gate, "server_access_token", None)
+        use_server = bool(client and access_token and (getattr(gate, "user", None) or {}).get("username"))
+        if not key and not use_server: return
         def work():
             try:
-                sources = online.watchmode_sources(key, title_id, "US")
+                if use_server:
+                    try:
+                        sources = client.get_watchmode_sources(access_token, str(title_id))
+                    except Exception:
+                        if not key: raise
+                        sources = online.watchmode_sources(key, title_id, "US")
+                else:
+                    sources = online.watchmode_sources(key, title_id, "US")
                 if isinstance(sources, dict):
                     if sources.get("error"): raise RuntimeError(str(sources["error"]))
                     sources = sources.get("sources", [])
@@ -1882,25 +1893,68 @@ class App(ctk.CTk):
         threading.Thread(target=work, daemon=True).start()
 
     def sync_watchmode(self, say, key, status_callback=None, on_complete=None):
-        """Refresh bounded US movie and TV streaming catalogs with the local Watchmode key."""
+        """Prefer the shared server catalog for members; retain local and guest fallbacks."""
         done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
-        if not key:
+        gate = getattr(self, "gate", None)
+        client = getattr(gate, "server_client", None)
+        access_token = getattr(gate, "server_access_token", None)
+        user = getattr(gate, "user", None) or {}
+        use_server = bool(client and access_token and user.get("username"))
+        if not key and not use_server:
             if status_callback: status_callback("watchmode_key", "not_set", "Watchmode key not set.")
             say("Watchmode key not set. Other configured sources will still refresh."); done("skipped"); return
         say("Updating US streaming catalog from Watchmode…")
         def work():
-            try:
-                online.watchmode_status(key)
-                catalogs = online.watchmode_catalog(key, page=1, limit=250)
-            except urllib.error.HTTPError as exc:
-                message = "Watchmode rejected the key. Check the saved credential." if exc.code in (401, 403) else f"Watchmode update failed (HTTP {exc.code})."
-                if status_callback: status_callback("watchmode_key", "bad", message)
-                self.uiq.put((say, (message,))); done("failed"); return
-            except Exception as exc:
-                if status_callback: status_callback("watchmode_key", "bad", f"Watchmode unavailable: {exc}")
-                self.uiq.put((say, (f"Watchmode update failed: {exc}",))); done("failed"); return
-            if status_callback: status_callback("watchmode_key", "ok", "Watchmode connection working.")
-            self.uiq.put((self.apply_watchmode, (catalogs, say)))
+            catalogs = None
+            server_cursor = None
+            used_server = False
+            server_error = None
+            if use_server:
+                try:
+                    is_admin = str(user.get("role", "")).lower() == "admin"
+                    if is_admin:
+                        try:
+                            client.refresh_watchmode_catalog(access_token)
+                        except Exception as refresh_exc:
+                            if getattr(refresh_exc, "status_code", None) == 429:
+                                self.uiq.put((say, ("Watchmode was refreshed recently; loading the shared cached updates.",)))
+                            else:
+                                self.uiq.put((say, (f"Watchmode refresh did not complete; checking the shared cache. ({refresh_exc})",)))
+                    cfg = events.load_cfg()
+                    synced_at = int(cfg.get("watchmode_server_synced_at", 0) or 0)
+                    cursor = int(cfg.get("watchmode_server_cursor", 0) or 0)
+                    if synced_at and time.time() - synced_at > 30 * 86400:
+                        cursor = 0
+                    response = client.get_watchmode_catalog(access_token, cursor)
+                    if response.get("available"):
+                        catalogs = response.get("catalogs") or {"movies": [], "tv": []}
+                        server_cursor = int(response.get("cursor", cursor) or cursor)
+                        used_server = True
+                    elif is_admin:
+                        # A failed provider refresh should not hide a previously shared snapshot.
+                        server_error = RuntimeError("No shared Watchmode catalog is cached yet.")
+                except Exception as exc:
+                    server_error = exc
+
+            if not used_server and key:
+                try:
+                    online.watchmode_status(key)
+                    catalogs = online.watchmode_catalog(key, page=1, limit=250)
+                except urllib.error.HTTPError as exc:
+                    message = "Watchmode rejected the key. Check the saved credential." if exc.code in (401, 403) else f"Watchmode update failed (HTTP {exc.code})."
+                    if status_callback: status_callback("watchmode_key", "bad", message)
+                    self.uiq.put((say, (message,))); done("failed"); return
+                except Exception as exc:
+                    if status_callback: status_callback("watchmode_key", "bad", f"Watchmode unavailable: {exc}")
+                    self.uiq.put((say, (f"Watchmode update failed: {exc}",))); done("failed"); return
+            elif not used_server:
+                message = str(server_error or "The shared Watchmode catalog is not ready yet; an administrator must configure its key and refresh it.")
+                if status_callback: status_callback("watchmode_key", "bad" if server_error else "not_set", message)
+                self.uiq.put((say, (message + " Saved cards remain available.",))); done("failed" if server_error else "skipped"); return
+
+            if status_callback:
+                status_callback("watchmode_key", "ok", "Watchmode cards synchronized from the shared server." if used_server else "Watchmode connection working with the local key.")
+            self.uiq.put((self.apply_watchmode, (catalogs, say, server_cursor)))
             done("success")
         threading.Thread(target=work, daemon=True).start()
 
@@ -2030,7 +2084,7 @@ class App(ctk.CTk):
             self.render_detail(self.sel)
         self.publish_dashboard_update(message)
 
-    def apply_watchmode(self, catalogs, say=None):
+    def apply_watchmode(self, catalogs, say=None, server_cursor=None):
         """Store one bounded page per media type; source links are loaded on demand."""
         now = int(time.time()); totals = {}; media_rows = []
         for cat, api_cat in (("movies", "movies"), ("tv", "tv")):
@@ -2058,6 +2112,11 @@ class App(ctk.CTk):
                              "watchmode_type": result.get("type") or ("Movie" if cat == "movies" else "TV Series"), "watchmode_catalog_at": now})
                 for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
         database.save_media_items(media_rows, guest_cache=self.is_guest_session())
+        if server_cursor is not None:
+            cfg = events.load_cfg()
+            cfg["watchmode_server_cursor"] = int(server_cursor)
+            cfg["watchmode_server_synced_at"] = int(time.time())
+            events.save_cfg(cfg)
         for key in [key for key in self.meta.d if key.startswith("streaming|")]: self.meta.d.pop(key, None)
         self.meta.save()
         message = f"Watchmode refreshed: {totals.get('movies', 0)} movies and {totals.get('tv', 0)} TV series listed. Older cached entries expire after 30 days."

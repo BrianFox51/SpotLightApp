@@ -107,6 +107,23 @@ class ServerClient:
             "GET", f"/catalog/ticketmaster?{query}", access_token=access_token, timeout=30
         )
 
+    def refresh_watchmode_catalog(self, access_token: str) -> dict[str, Any]:
+        return self._request(
+            "POST", "/admin/catalog/watchmode/refresh", access_token=access_token, timeout=90
+        )
+
+    def get_watchmode_catalog(self, access_token: str, since: int = 0) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/catalog/watchmode?since={max(0, int(since))}",
+            access_token=access_token, timeout=30,
+        )
+
+    def get_watchmode_sources(self, access_token: str, title_id: str) -> list[dict[str, Any]]:
+        return self._request(
+            "GET", f"/catalog/watchmode/{quote(str(title_id), safe='')}/sources",
+            access_token=access_token, timeout=30,
+        ).get("sources", [])
+
     def register(
         self, email: str, username: str, password: str
     ) -> dict[str, Any]:

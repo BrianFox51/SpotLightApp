@@ -66,6 +66,9 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 |---|---|---|---|
 | Refresh shared Ticketmaster events | `POST /catalog/ticketmaster/refresh` | Bearer access token; either `state_code` or `latitude`, `longitude`, and optional `radius` | Scoped changed-card cursor and counts |
 | Read changed Ticketmaster events | `GET /catalog/ticketmaster?scope=...&since=...` | Bearer access token; area scope and local cursor | Scoped event card deltas |
+| Refresh shared Watchmode catalog | `POST /admin/catalog/watchmode/refresh` | Admin bearer access token | Changed-card cursor and counts |
+| Read changed Watchmode cards | `GET /catalog/watchmode?since=...` | Bearer access token; local cursor | Movie and TV card deltas |
+| Load Watchmode availability | `GET /catalog/watchmode/{title_id}/sources` | Bearer access token; rate-limited | U.S. streaming service links |
 | Register server account | `POST /auth/register` | `email`, `username`, `password` | Account fields |
 | Sign in | `POST /auth/login` | `identifier` or `email`, plus `password` | Access and refresh tokens, type, expiry |
 | Refresh session | `POST /auth/refresh` | `refresh_token` | New token pair |

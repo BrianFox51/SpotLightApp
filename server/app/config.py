@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     rate_limit_recovery: str = "5/hour"
     rate_limit_community: str = "10/minute"
     rate_limit_provider_refresh: str = "1/minute"
+    rate_limit_provider_lookup: str = "10/minute"
     provider_secrets_encryption_key: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
