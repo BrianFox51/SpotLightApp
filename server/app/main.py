@@ -23,6 +23,13 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    # create_all does not add indexes to existing tables; enforce
+    # case-insensitive username uniqueness on already initialized databases too.
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_username_lower "
+            "ON accounts (lower(username))"
+        ))
     log.info("startup", env=settings.app_env)
     yield
 app = FastAPI(

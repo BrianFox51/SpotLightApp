@@ -9,7 +9,7 @@ import argparse
 import getpass
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import models  # ensure model mappings are registered before metadata use
 from app.database import Base, SessionLocal, engine
@@ -27,7 +27,7 @@ from app.provider_secrets import (
 
 
 def _actor(db, username: str) -> Account:
-    account = db.scalar(select(Account).where(Account.username == username.strip().lower()))
+    account = db.scalar(select(Account).where(func.lower(Account.username) == username.strip().lower()))
     if account is None or not account.is_active or account.role != "admin":
         raise ProviderSecretError("An active Spotlight admin account is required for this operation.")
     return account

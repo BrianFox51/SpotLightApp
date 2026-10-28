@@ -51,10 +51,12 @@ def issue_tokens(db: DBSession, account: Account) -> TokenResponse:
 @limiter.limit(settings.rate_limit_register)
 def register(payload: RegisterRequest, request: Request, db: DBSession = Depends(get_db)):
     email = str(payload.email).lower()
-    username = payload.username.lower()
+    # Keep the capitalization the user chose for display. Login and account
+    # uniqueness remain case-insensitive.
+    username = payload.username.strip()
     existing = db.scalar(
         select(Account).where(
-            or_(Account.email == email, Account.username == username)
+            or_(Account.email == email, func.lower(Account.username) == username.lower())
         )
     )
     if existing:
