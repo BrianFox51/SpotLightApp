@@ -124,6 +124,17 @@ class ServerClient:
             access_token=access_token, timeout=30,
         ).get("sources", [])
 
+    def refresh_igdb_catalog(self, access_token: str) -> dict[str, Any]:
+        return self._request(
+            "POST", "/admin/catalog/igdb/refresh", access_token=access_token, timeout=120
+        )
+
+    def get_igdb_catalog(self, access_token: str, since: int = 0) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/catalog/igdb?since={max(0, int(since))}",
+            access_token=access_token, timeout=45,
+        )
+
     def register(
         self, email: str, username: str, password: str
     ) -> dict[str, Any]:

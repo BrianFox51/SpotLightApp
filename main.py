@@ -1965,18 +1965,67 @@ class App(ctk.CTk):
             if status_callback:
                 status_callback("igdb_client_id", state, message)
                 status_callback("igdb_client_secret", state, message)
-        if not client_id or not client_secret:
+        gate = getattr(self, "gate", None)
+        client = getattr(gate, "server_client", None)
+        access_token = getattr(gate, "server_access_token", None)
+        user = getattr(gate, "user", None) or {}
+        use_server = bool(client and access_token and user.get("username"))
+        local_keys = bool(client_id and client_secret)
+        if not local_keys and not use_server:
             report("not_set", "IGDB needs both a Twitch Client ID and Client Secret; other sources will still refresh.")
             say("IGDB needs both Twitch credentials. Other configured sources will still refresh."); done("skipped"); return
         say("Updating popular and upcoming games from IGDB…")
         def work():
-            try:
-                catalogs = online.igdb_catalog(client_id, client_secret, limit=100)
-                game_count = sum(len(catalogs.get(name, []) or []) for name in ("popular", "upcoming"))
-                if not game_count:
-                    message = "IGDB credentials work, but the game queries returned no titles. Check the IGDB app access and try Refresh again."
+            catalogs = None
+            server_cursor = None
+            used_server = False
+            server_error = None
+            if use_server:
+                try:
+                    is_admin = str(user.get("role", "")).lower() == "admin"
+                    if is_admin:
+                        try:
+                            client.refresh_igdb_catalog(access_token)
+                        except Exception as refresh_exc:
+                            if getattr(refresh_exc, "status_code", None) == 429:
+                                self.uiq.put((say, ("IGDB was refreshed recently; loading the shared cached updates.",)))
+                            else:
+                                self.uiq.put((say, (f"IGDB refresh did not complete; checking the shared cache. ({refresh_exc})",)))
+                    cfg = events.load_cfg()
+                    cursor = int(cfg.get("igdb_server_cursor", 0) or 0)
+                    response = client.get_igdb_catalog(access_token, cursor)
+                    if response.get("available"):
+                        catalogs = response.get("catalogs") or {"popular": [], "upcoming": [], "genres": [], "platforms": []}
+                        catalogs["membership"] = response.get("membership") or {}
+                        server_cursor = int(response.get("cursor", cursor) or cursor)
+                        used_server = True
+                    elif is_admin:
+                        server_error = RuntimeError("No shared IGDB catalog is cached yet.")
+                except Exception as exc:
+                    server_error = exc
+
+            if not used_server and local_keys:
+                try:
+                    catalogs = online.igdb_catalog(client_id, client_secret, limit=100)
+                    game_count = sum(len(catalogs.get(name, []) or []) for name in ("popular", "upcoming"))
+                    if not game_count:
+                        message = "IGDB credentials work, but the game queries returned no titles. Check the IGDB app access and try Refresh again."
+                        report("bad", message)
+                        self.uiq.put((say, (message,))); done("failed"); return
+                except urllib.error.HTTPError as exc:
+                    message = "IGDB rejected the Twitch credentials. Check the Client ID and Client Secret." if exc.code in (400, 401, 403) else f"IGDB update failed (HTTP {exc.code})."
                     report("bad", message)
                     self.uiq.put((say, (message,))); done("failed"); return
+                except Exception as exc:
+                    report("bad", f"IGDB unavailable: {exc}")
+                    self.uiq.put((say, (f"IGDB update failed: {exc}",))); done("failed"); return
+            elif not used_server:
+                message = str(server_error or "The shared IGDB catalog is not ready yet; an administrator must configure both Twitch credentials and refresh it.")
+                report("bad" if server_error else "not_set", message)
+                self.uiq.put((say, (message + " Saved games remain available.",)))
+                done("failed" if server_error else "skipped"); return
+
+            try:
                 # Download covers in the worker so the desktop UI stays responsive.
                 cover_jobs = {}; screenshot_jobs = {}
                 for result in (catalogs.get("popular", []) or []) + (catalogs.get("upcoming", []) or []):
@@ -2004,32 +2053,36 @@ class App(ctk.CTk):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
                     list(pool.map(download_cover, cover_jobs.items()))
                     list(pool.map(download_screenshot, screenshot_jobs.items()))
-            except urllib.error.HTTPError as exc:
-                message = "IGDB rejected the Twitch credentials. Check the Client ID and Client Secret." if exc.code in (400, 401, 403) else f"IGDB update failed (HTTP {exc.code})."
-                report("bad", message)
-                self.uiq.put((say, (message,))); done("failed"); return
             except Exception as exc:
-                report("bad", f"IGDB unavailable: {exc}")
-                self.uiq.put((say, (f"IGDB update failed: {exc}",))); done("failed"); return
-            self.uiq.put((self.apply_igdb_safely, (catalogs, say, report, done)))
+                self.uiq.put((say, (f"Some game artwork could not be cached: {exc}",)))
+            self.uiq.put((self.apply_igdb_safely, (catalogs, say, report, done, server_cursor)))
         threading.Thread(target=work, daemon=True).start()
 
-    def apply_igdb_safely(self, catalogs, say, report, on_complete=None):
+    def apply_igdb_safely(self, catalogs, say, report, on_complete=None, server_cursor=None):
         """Keep a malformed IGDB result from stopping the UI queue silently."""
         try:
-            self.apply_igdb(catalogs, say)
+            self.apply_igdb(catalogs, say, server_cursor)
         except Exception as exc:
             message = f"IGDB returned data, but Spotlight could not save it: {exc}"
             report("bad", message)
             if say: say(message)
             if on_complete: on_complete("failed")
             return
-        report("ok", "IGDB credentials working; catalog data loaded.")
+        report("ok", "IGDB cards synchronized from the shared server." if server_cursor is not None else "IGDB credentials working; catalog data loaded.")
         if on_complete: on_complete("success")
 
-    def apply_igdb(self, catalogs, say=None):
+    def apply_igdb(self, catalogs, say=None, server_cursor=None):
         """Save IGDB popular/upcoming titles and expose their genre/platform metadata."""
         now = int(time.time()); merged = {}
+        membership = catalogs.get("membership") or {}
+        popular_ids = {str(value) for value in membership.get("popular", [])}
+        upcoming_ids = {str(value) for value in membership.get("upcoming", [])}
+        if membership:
+            for metadata in self.meta.d.values():
+                if metadata.get("igdb_id") is not None:
+                    game_id = str(metadata["igdb_id"])
+                    metadata["igdb_popular"] = game_id in popular_ids
+                    metadata["igdb_upcoming"] = game_id in upcoming_ids
         for feed_name in ("popular", "upcoming"):
             for result in catalogs.get(feed_name, []) or []:
                 title = str(result.get("name") or "").strip()
@@ -2066,16 +2119,26 @@ class App(ctk.CTk):
                 "score": score, "desc": result.get("summary") or "", "first_shown": first_label, "recent_shown": flags, "srcs": ["IGDB"]}))
             metadata = self.meta.d.setdefault(f"games|{title}", {})
             metadata.update({"igdb_id": result.get("id"), "igdb_genres": genres, "igdb_platforms": platforms,
-                             "igdb_popular": entry["popular"], "igdb_upcoming": entry["upcoming"], "igdb_catalog_at": now})
+                             "igdb_popular": (str(result.get("id")) in popular_ids if membership else entry["popular"]),
+                             "igdb_upcoming": (str(result.get("id")) in upcoming_ids if membership else entry["upcoming"]),
+                             "igdb_catalog_at": now})
             videos = result.get("videos") or []
             if videos and videos[0].get("video_id"):
                 metadata["igdb_video_id"] = videos[0]["video_id"]
             counts["popular"] += int(entry["popular"]); counts["upcoming"] += int(entry["upcoming"])
             for art_key in [key for key in _ART if key[0] == title]: del _ART[art_key]
         database.save_media_items(media_rows, guest_cache=self.is_guest_session())
+        if server_cursor is not None:
+            cfg = events.load_cfg()
+            cfg["igdb_server_cursor"] = int(server_cursor)
+            events.save_cfg(cfg)
         self.meta.save()
         total = len(merged)
-        message = f"IGDB refreshed: {counts['popular']} popular and {counts['upcoming']} upcoming games; {total} unique titles with genre and platform data."
+        if server_cursor is not None and not total:
+            total = len(self.load_catalog_items("games"))
+            message = f"IGDB shared catalog is up to date; no changed game cards needed downloading. Current local catalog: {total} games."
+        else:
+            message = f"IGDB refreshed: {counts['popular']} popular and {counts['upcoming']} upcoming games; {total} unique titles with genre and platform data."
         if say: say(message)
         dashboard_visible = bool(getattr(self, "gate", None) and self.gate.winfo_ismapped())
         if self.cat == "games" and self.sel is None and not dashboard_visible:
