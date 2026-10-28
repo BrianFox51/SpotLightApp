@@ -23,6 +23,18 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=1, max_length=256)
 class RevokeRequest(BaseModel):
     refresh_token: str = Field(min_length=1, max_length=256)
+class TicketmasterCatalogRefreshRequest(BaseModel):
+    state_code: str | None = Field(default=None, pattern=r"^[A-Za-z]{2}$")
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    radius: float = Field(default=100, gt=0, le=100)
+    @model_validator(mode="after")
+    def require_one_search_area(self):
+        has_state = bool(self.state_code)
+        has_coordinates = self.latitude is not None and self.longitude is not None
+        if has_state == has_coordinates or (self.latitude is None) != (self.longitude is None):
+            raise ValueError("Provide either a two-letter state code or both coordinates")
+        return self
 class RecoveryEmailRequest(BaseModel):
     email: EmailStr
 class PasswordResetComplete(BaseModel):

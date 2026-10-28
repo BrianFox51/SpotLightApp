@@ -55,6 +55,8 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 - `database.dashboard_stats` provides the cached catalog and per-user favorite counts. The dashboard uses the same expiry and area-filtered event cards as Spotlight for its music, sports, and festivals tiles; movie, TV, and game tiles show the saved catalog counts. The headline total is recomputed from those six displayed tiles. Refresh results are merged by stable local media ID, so repeated results update existing rows instead of incrementing counts for duplicates.
 - Expired Ticketmaster and Ohio event cards are pruned on every dashboard entry, before dashboard counts are calculated. Favorited cards are retained. This date-based cleanup is separate from choosing a state or pressing Refresh. TVmaze and Ohio schedule refreshes also prune stale provider-only rows after non-empty results. Watchmode's bounded first page is inconclusive for missing rows; its 30-day age cleanup removes expired, un-favorited Watchmode-only rows at app startup.
 - Ticketmaster does not delete cards merely because they are absent from one refresh response. Date-based cleanup removes past events; provider refresh cleanup retains favorites and shared-source cards. A failed or empty fetch does not trigger a clear-all.
+- Signed-in accounts refresh Ticketmaster through the server for their selected state or profile coordinates. The server uses its encrypted key, stores scoped changed-card deltas, and returns event data without the key. Desktop cursors are stored per area and advance after SQLite saves; the existing local-key path remains a fallback during beta, and guests stay on the local path.
+- Ticketmaster refresh requests are rate-limited. If a refresh was recent, the desktop still requests the latest shared delta rather than treating the rate limit as a failed catalog read.
 - The admin-only **Clear card cache** action is available to a server-authenticated account whose server role is `admin`. It asks for confirmation, removes un-favorited catalog rows without personal notes and their linked event/credit rows, and resets the last-refresh marker. It keeps favorites, personal notes, accounts, API keys, source metadata, and image files. Afterward, Refresh repopulates immediately, or signing out and back in exercises the automatic dashboard refresh.
 - Favorites counts are scoped to the current local username. They are separate from catalog totals and event counts; server favorites are not synchronized with local favorites.
 
@@ -62,6 +64,8 @@ Track the desktop app's integration with the optional SpotLight backend, includi
 
 | Operation | Method and path | Request | Success response |
 |---|---|---|---|
+| Refresh shared Ticketmaster events | `POST /catalog/ticketmaster/refresh` | Bearer access token; either `state_code` or `latitude`, `longitude`, and optional `radius` | Scoped changed-card cursor and counts |
+| Read changed Ticketmaster events | `GET /catalog/ticketmaster?scope=...&since=...` | Bearer access token; area scope and local cursor | Scoped event card deltas |
 | Register server account | `POST /auth/register` | `email`, `username`, `password` | Account fields |
 | Sign in | `POST /auth/login` | `identifier` or `email`, plus `password` | Access and refresh tokens, type, expiry |
 | Refresh session | `POST /auth/refresh` | `refresh_token` | New token pair |

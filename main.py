@@ -1594,15 +1594,19 @@ class App(ctk.CTk):
             gate.update_dashboard_stats()
             gate.say(message)
     def sync_events(self, say, state_code=None, status_callback=None, on_complete=None):
-        """Load Ticketmaster event listings for the user's state."""
+        """Sync Ticketmaster through the shared server, with the local-key path as fallback."""
         done = lambda outcome="success": self.uiq.put((on_complete, (outcome,))) if on_complete else None
         u = self.gate.user or {}; key = events.load_cfg().get("ticketmaster_key", "")
-        if not key:
+        gate = getattr(self, "gate", None)
+        client = getattr(gate, "server_client", None)
+        access_token = getattr(gate, "server_access_token", None)
+        use_server = bool(client and access_token and u.get("username"))
+        if not key and not use_server:
             if status_callback: status_callback("ticketmaster_key", "not_set", "Ticketmaster: key not set.")
-            say("Ticketmaster key not set. Other configured sources will still refresh."); done("skipped"); return
+            say("Ticketmaster is not configured locally or on the server. Other sources will still refresh."); done("skipped"); return
         state_code = (state_code or "").strip().upper()
         guest = not bool(u.get("username"))
-        if not state_code and not guest:
+        if not state_code and not guest and (u.get("lat") is None or u.get("lng") is None):
             if status_callback: status_callback("ticketmaster_key", "not_checked", "Add a location in your profile to search events.")
             say("Add a location in your profile to search events."); done("skipped"); return
         search_label = f"all of {state_code}" if state_code else "within about 100 miles of your approximate location"
@@ -1632,6 +1636,47 @@ class App(ctk.CTk):
                                "updated_at": int(time.time())}
                         self.uiq.put((self.gate.refresh_guest_location, (loc,)))
                     area_scope = f"local:{float(latitude):.2f},{float(longitude):.2f}"
+                if use_server:
+                    try:
+                        search_area = {"state_code": state_code} if state_code else {
+                            "latitude": float(latitude), "longitude": float(longitude), "radius": 100,
+                        }
+                        cfg = events.load_cfg()
+                        cursors = cfg.get("ticketmaster_server_cursors", {})
+                        cursor = int(cursors.get(area_scope, 0) or 0)
+                        refresh_was_limited = False
+                        try:
+                            client.refresh_ticketmaster_catalog(access_token, search_area)
+                        except Exception as refresh_exc:
+                            # A recent refresh may be rate-limited; the shared delta is still readable.
+                            if getattr(refresh_exc, "status_code", None) != 429:
+                                raise
+                            refresh_was_limited = True
+                            self.uiq.put((say, ("Ticketmaster was refreshed recently; loading the shared cached updates.",)))
+                        delta = client.get_ticketmaster_catalog(access_token, area_scope, cursor)
+                        if refresh_was_limited and not delta.get("available"):
+                            raise RuntimeError("No shared Ticketmaster cards are cached for this area yet; try again after a minute.")
+                        catalogs = delta.get("catalogs") or {"music": [], "sports": [], "festivals": []}
+                        server_cursor = int(delta.get("cursor", cursor) or cursor)
+                        for rows in catalogs.values():
+                            for row in rows:
+                                poster = ((row.get("event") or {}).get("poster") or "").strip()
+                                title = ((row.get("media") or {}).get("title") or "").strip()
+                                poster_path = os.path.join(POSTERS, events._slug(title) + ".jpg") if title else ""
+                                if poster and poster_path and not os.path.exists(poster_path):
+                                    try: events._save(poster, poster_path)
+                                    except Exception: pass
+                        if status_callback:
+                            status_callback("ticketmaster_key", "ok", "Ticketmaster cards synchronized from the shared server.")
+                        self.uiq.put((self.apply_ticketmaster_catalog, (catalogs, area_scope, server_cursor, search_label, say)))
+                        done("success")
+                        return
+                    except Exception as exc:
+                        if not key:
+                            message = f"Ticketmaster server refresh failed: {exc}. Saved cards remain available."
+                            if status_callback: status_callback("ticketmaster_key", "bad", message)
+                            self.uiq.put((say, (message,))); done("failed"); return
+                        self.uiq.put((say, (f"Ticketmaster server unavailable; trying the local fallback. ({exc})",)))
                 res = events.sync(key, latitude, longitude, POSTERS,
                                   lambda message: self.uiq.put((say, (message,))), radius=100,
                                   state_code=state_code or None, area_scope=area_scope,
@@ -1651,6 +1696,38 @@ class App(ctk.CTk):
             self.uiq.put((self.apply_sync, (res, search_label)))
             done("success")
         threading.Thread(target=work, daemon=True).start()
+    def apply_ticketmaster_catalog(self, catalogs, area_scope, server_cursor, search_label, say=None):
+        """Apply server deltas to the existing local catalog and commit its cursor afterward."""
+        rows_to_save = []
+        metadata = {}
+        counts = {"music": 0, "sports": 0, "festivals": 0}
+        for category in counts:
+            for row in catalogs.get(category, []) or []:
+                item = row.get("media") or {}
+                event = row.get("event") or {}
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    continue
+                rows_to_save.append((category, item, event, area_scope))
+                metadata[(category, title)] = row.get("metadata") or {}
+                counts[category] += 1
+        database.save_provider_event_batch(rows_to_save)
+        for (category, title), values in metadata.items():
+            self.meta.d.setdefault(f"{category}|{title}", {}).update(values)
+        self.meta.save()
+        cfg = events.load_cfg()
+        cfg.setdefault("ticketmaster_server_cursors", {})[area_scope] = int(server_cursor)
+        events.save_cfg(cfg)
+        if sum(counts.values()):
+            message = (f"Ticketmaster shared catalog synchronized: {sum(counts.values())} changed cards "
+                       f"({counts['music']} music, {counts['sports']} sports, {counts['festivals']} festivals) {search_label}.")
+        else:
+            message = f"Ticketmaster shared catalog is up to date {search_label}; no changed cards to download."
+        if self.cat in {"music", "sports", "festivals"} and self.sel is None and not (getattr(self, "gate", None) and self.gate.winfo_ismapped()):
+            self.items = self.load_catalog_items(self.cat)
+            if self.cat in {"music", "festivals"}: self.show_genres()
+        self.publish_dashboard_update(message)
+        if say: say(message)
     def apply_sync(self, res, search_label="near you"):
         for (cat, title), kw in res["meta"].items(): self.meta.d.setdefault(f"{cat}|{title}", {}).update(kw)
         self.meta.save()

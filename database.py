@@ -194,6 +194,41 @@ def save_media_items(rows, *, guest_cache=False):
     finally:
         conn.close()
 
+def save_provider_event_batch(rows, *, guest_cache=False):
+    """Write server-fetched event cards and their local event facts atomically."""
+    if not rows: return
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        now = int(time.time())
+        for cat, item, event, area_scope in rows:
+            media_id = hashlib.sha1(f"{cat}_{item['title']}_{item['sub']}".encode()).hexdigest()
+            existing = conn.execute("SELECT user_notes FROM media_items WHERE id = ?", (media_id,)).fetchone()
+            notes = existing[0] if existing else ""
+            conn.execute("""INSERT INTO media_items
+                (id, category, title, sub, year, url, score, description, user_notes, sources, first_shown, recent_shown, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET url=excluded.url, year=excluded.year, score=excluded.score,
+                description=excluded.description, sources=excluded.sources, first_shown=excluded.first_shown,
+                recent_shown=excluded.recent_shown, last_updated=excluded.last_updated""",
+                (media_id, cat, item["title"], item["sub"], item["year"], item["url"], item["score"],
+                 item["desc"], notes, json.dumps(item.get("srcs", [])), item.get("first_shown", ""),
+                 item.get("recent_shown", ""), now))
+            if guest_cache:
+                conn.execute("INSERT OR IGNORE INTO guest_catalog_items (media_id, created) VALUES (?, ?)", (media_id, now))
+            event_id = hashlib.sha1(
+                f"{media_id}_{event['venue']}_{event['time']}_{event['location']}_{area_scope}".encode()
+            ).hexdigest()
+            conn.execute("""INSERT INTO local_events
+                (event_id, media_id, venue_name, event_time, location_details, purchase_url, area_scope)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO UPDATE SET venue_name=excluded.venue_name, event_time=excluded.event_time,
+                location_details=excluded.location_details, purchase_url=excluded.purchase_url""",
+                (event_id, media_id, event["venue"], event["time"], event["location"],
+                 event.get("purchase_url", ""), area_scope))
+        conn.commit()
+    finally:
+        conn.close()
+
 def clear_unfavorited_catalog_cache():
     """Clear cached catalog rows with no favorites or personal notes, preserving user data."""
     conn = sqlite3.connect(DB_PATH)

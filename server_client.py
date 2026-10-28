@@ -6,7 +6,7 @@ import uuid
 import events
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -93,6 +93,18 @@ class ServerClient:
     def refresh_tmdb_catalog(self, access_token: str) -> dict[str, Any]:
         return self._request(
             "POST", "/admin/catalog/tmdb/refresh", access_token=access_token, timeout=75
+        )
+
+    def refresh_ticketmaster_catalog(self, access_token: str, search_area: dict[str, Any]) -> dict[str, Any]:
+        return self._request(
+            "POST", "/catalog/ticketmaster/refresh", search_area,
+            access_token=access_token, timeout=180,
+        )
+
+    def get_ticketmaster_catalog(self, access_token: str, scope: str, since: int = 0) -> dict[str, Any]:
+        query = urlencode({"scope": scope, "since": max(0, int(since))})
+        return self._request(
+            "GET", f"/catalog/ticketmaster?{query}", access_token=access_token, timeout=30
         )
 
     def register(

@@ -4,7 +4,7 @@
 
 This document is an operating and follow-up guide for the optional online backend used by the Spotlight Windows desktop app. The app remains local-first for catalog data, API settings, and local profiles, while the server provides online accounts, editable profiles, favorites endpoints, moderated event submissions, and a member discussion board. The home server is intended to run the API and PostgreSQL; this guide describes safe maintenance and the remaining setup needed for email recovery.
 
-The initial backend should provide shared Spotlight accounts, editable profiles, cross-device favorites, and moderated community event submissions. It should not move the media-provider API keys out of each user's local Spotlight settings.
+The initial backend provides shared Spotlight accounts, editable profiles, cross-device favorites, and moderated community event submissions. Provider keys initially stayed in local settings; following an explicit design decision, TMDB and Ticketmaster now have incremental server-backed catalog paths using encrypted provider secrets. Remaining providers stay local until their individual server paths are implemented.
 
 ## Recommended first deployment
 
