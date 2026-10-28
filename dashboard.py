@@ -344,7 +344,7 @@ class Gate(ctk.CTkFrame):
     def show_login(s):
         s.app.hide_favorites_button()
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 1.2.4.1", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 1.2.4.2", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
@@ -1170,6 +1170,7 @@ class Gate(ctk.CTkFrame):
         area_choices = [f"{code} (Select a different state)" for code in US_STATE_CODES]
         area = ctk.StringVar(value=state_choice)
         is_member = bool(u.get("username"))
+        is_admin = str(u.get("role", "")).strip().lower() == "admin"
         area_selector = ctk.CTkOptionMenu(area_row, values=area_choices, variable=area, width=245)
         def set_area(choice):
             nonlocal selected_state
@@ -1316,6 +1317,8 @@ class Gate(ctk.CTkFrame):
         visibility_toggle = ctk.CTkButton(manager_head, text="Show keys", width=92, height=34,
                                            fg_color=CARD, hover_color=HOVER, command=toggle_key_visibility)
         visibility_toggle.pack(side="left")
+        if not is_admin:
+            manager_head.pack_forget()
 
         event_row = ctk.CTkFrame(live, fg_color="transparent"); event_row.pack(fill="x", padx=14, pady=(2, 4))
         ctk.CTkButton(event_row, text="Ticketmaster key", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
@@ -1326,6 +1329,8 @@ class Gate(ctk.CTkFrame):
                       command=lambda: webbrowser.open("https://api.watchmode.com/")).pack(side="left")
         ctk.CTkButton(event_row, text="IGDB / Twitch", fg_color="transparent", hover_color=HOVER, text_color=GOLD,
                       command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps")).pack(side="left")
+        if not is_admin:
+            event_row.pack_forget()
         ctk.CTkLabel(live, text="This product uses the TMDB API but is not endorsed or certified by TMDB.", text_color="#9aa0b5", font=("Segoe UI", 11)).pack(pady=(0, 10))
         s.sponsor_footer(p)
         enter_button = ctk.CTkButton(dashboard_actions, text="Enter Spotlight  ▶", width=220, height=46, font=("Segoe UI", 17, "bold"), command=s.enter_spotlight)
