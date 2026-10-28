@@ -2079,7 +2079,7 @@ class App(ctk.CTk):
         upcoming_ids = {str(value) for value in membership.get("upcoming", [])}
         if membership:
             for metadata in self.meta.d.values():
-                if metadata.get("igdb_id") is not None:
+                if isinstance(metadata, dict) and metadata.get("igdb_id") is not None:
                     game_id = str(metadata["igdb_id"])
                     metadata["igdb_popular"] = game_id in popular_ids
                     metadata["igdb_upcoming"] = game_id in upcoming_ids
@@ -2117,7 +2117,11 @@ class App(ctk.CTk):
             sub = g(existing_games.get(title.casefold()), "sub") or company
             media_rows.append(("games", {"title": title, "sub": sub, "year": year, "url": "https://www.igdb.com/games/" + str(result.get("slug") or ""),
                 "score": score, "desc": result.get("summary") or "", "first_shown": first_label, "recent_shown": flags, "srcs": ["IGDB"]}))
-            metadata = self.meta.d.setdefault(f"games|{title}", {})
+            metadata_key = f"games|{title}"
+            metadata = self.meta.d.get(metadata_key)
+            if not isinstance(metadata, dict):
+                metadata = {}
+                self.meta.d[metadata_key] = metadata
             metadata.update({"igdb_id": result.get("id"), "igdb_genres": genres, "igdb_platforms": platforms,
                              "igdb_popular": (str(result.get("id")) in popular_ids if membership else entry["popular"]),
                              "igdb_upcoming": (str(result.get("id")) in upcoming_ids if membership else entry["upcoming"]),
