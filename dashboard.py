@@ -344,7 +344,7 @@ class Gate(ctk.CTkFrame):
     def show_login(s):
         s.app.hide_favorites_button()
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 1.2.8.3", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 1.2.8.5", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
@@ -1704,7 +1704,7 @@ class Gate(ctk.CTkFrame):
             actions = ctk.CTkFrame(card, fg_color="transparent")
             actions.pack(fill="x", padx=8, pady=(0, 8))
             ctk.CTkButton(actions, text="View profile", width=105, height=30, fg_color="#24598a", hover_color="#3278b5",
-                          command=lambda name=post["author"]: s.open_public_profile(client, token, name)).pack(side="left", padx=3)
+                          command=lambda name=post["author"], parent=dialog: s.open_public_profile(client, token, name, parent)).pack(side="left", padx=3)
             ctk.CTkButton(actions, text=f"Reply · {post['reply_count']}", width=150,
                           height=30, command=lambda item=post: s.open_community_thread(client, token, item,
                               (dialog, view, status, category))).pack(side="left", padx=3)
@@ -1985,7 +1985,7 @@ class Gate(ctk.CTkFrame):
                      text_color="#85899a").pack(anchor="w", padx=12)
         ctk.CTkButton(panel, text=f"Posted by {post['author']} · View profile", width=220, height=26,
                       fg_color="transparent", hover_color=HOVER,
-                      command=lambda: s.open_public_profile(client, token, post["author"])).pack(anchor="w", padx=8, pady=(2, 0))
+                      command=lambda: s.open_public_profile(client, token, post["author"], dialog)).pack(anchor="w", padx=8, pady=(2, 0))
         ctk.CTkLabel(panel, text="Original post", text_color="#cfd3e0",
                      font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=14, pady=(8, 0))
         s.render_community_rich_text(panel, post["body"], height=250, wraplength=680).pack(fill="x", padx=12, pady=(3, 4))
@@ -2031,7 +2031,7 @@ class Gate(ctk.CTkFrame):
             ctk.CTkButton(card, text=f"{reply['author']} · {str(reply['created_at'])[:16]} · View profile",
                           text_color=GOLD, fg_color="transparent", hover_color=HOVER,
                           font=("Segoe UI", 10, "bold"), height=24, width=300,
-                          command=lambda name=reply["author"]: s.open_public_profile(client, token, name)).pack(anchor="w", padx=6, pady=(5, 0))
+                          command=lambda name=reply["author"], parent=dialog: s.open_public_profile(client, token, name, parent)).pack(anchor="w", padx=6, pady=(5, 0))
             ctk.CTkLabel(card, text=reply["body"], text_color="#cfd3e0", wraplength=640,
                          justify="left", anchor="w").pack(fill="x", padx=10, pady=4)
             ctk.CTkButton(card, text="Report reply", width=100, height=26, fg_color="transparent", hover_color=HOVER,
@@ -2043,14 +2043,15 @@ class Gate(ctk.CTkFrame):
                                   lambda: s.load_community_replies(client, token, dialog, post, view, status))).pack(anchor="w", padx=6, pady=(0, 5))
         status.configure(text=f"{len(data)} {'reply' if len(data) == 1 else 'replies'}", text_color="#9aa0b5")
 
-    def open_public_profile(s, client, token, username):
-        dialog = ctk.CTkToplevel(s.app)
+    def open_public_profile(s, client, token, username, parent=None):
+        parent = parent if parent is not None and parent.winfo_exists() else s.app
+        dialog = ctk.CTkToplevel(parent)
         dialog.title(f"{username} · Spotlight member")
         dialog.geometry("460x560")
         dialog.minsize(400, 460)
         dialog.resizable(True, True)
         dialog.configure(fg_color=BG)
-        dialog.transient(s.app)
+        dialog.transient(parent)
         panel = ctk.CTkScrollableFrame(dialog, fg_color=PANEL, corner_radius=14)
         panel.pack(fill="both", expand=True, padx=16, pady=16)
         status = ctk.CTkLabel(panel, text="Loading member profile…", text_color="#9aa0b5")
