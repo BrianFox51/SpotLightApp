@@ -3,12 +3,13 @@ import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from app.config import settings
 from app.database import get_db
-from app.models import Account, PasswordResetChallenge, Profile, Session as AccountSession
+from app.models import Account, LoginAttempt, PasswordResetChallenge, Profile, Session as AccountSession
 from app.schemas import AccountResponse, LoginRequest, PasswordResetComplete, RecoveryEmailRequest, RefreshRequest, RegisterRequest, RevokeRequest, TokenResponse
 from app.rate_limit import limiter
 from app.mailer import send_recovery_email
@@ -20,6 +21,84 @@ from app.security import (
 )
 router = APIRouter()
 RECOVERY_MESSAGE = "If an account matches that email, recovery instructions have been sent."
+LOGIN_MAX_FAILURES = 4
+LOGIN_LOCKOUT = timedelta(minutes=15)
+LOGIN_FAILURE_WINDOW = timedelta(minutes=15)
+
+
+def _login_identifier_hash(identifier: str) -> str:
+    return hmac.new(
+        settings.secret_key.encode("utf-8"),
+        f"spotlight-login:{identifier}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _locked_login_error(locked_until: datetime) -> HTTPException:
+    now = datetime.now(timezone.utc)
+    remaining = max(1, int((locked_until - now).total_seconds() + 0.999))
+    minutes = max(1, (remaining + 59) // 60)
+    minute_label = "minute" if minutes == 1 else "minutes"
+    return HTTPException(
+        status_code=423,
+        detail=f"Too many failed sign-in attempts. Please wait about {minutes} {minute_label} before trying again.",
+        headers={"Retry-After": str(remaining)},
+    )
+
+
+def _get_login_attempt(db: DBSession, identifier_hash: str) -> LoginAttempt | None:
+    # This application uses PostgreSQL in production. Insert-if-absent followed
+    # by a row lock keeps simultaneous failed attempts from bypassing the limit.
+    db.execute(pg_insert(LoginAttempt).values(
+        identifier_hash=identifier_hash,
+        failed_attempts=0,
+        last_failed_at=datetime.now(timezone.utc),
+        locked_until=None,
+    ).on_conflict_do_nothing(index_elements=[LoginAttempt.identifier_hash]))
+    return db.scalar(select(LoginAttempt).where(
+        LoginAttempt.identifier_hash == identifier_hash
+    ).with_for_update())
+
+
+def _record_failed_login(db: DBSession, identifier_hash: str) -> HTTPException:
+    now = datetime.now(timezone.utc)
+    attempt = _get_login_attempt(db, identifier_hash)
+    if attempt is None:
+        db.rollback()
+        return HTTPException(status_code=503, detail="Sign-in is temporarily unavailable. Please try again.")
+    if attempt.locked_until and attempt.locked_until > now:
+        locked_until = attempt.locked_until
+        db.rollback()
+        return _locked_login_error(locked_until)
+    if attempt.locked_until or attempt.last_failed_at < now - LOGIN_FAILURE_WINDOW:
+        attempt.failed_attempts = 0
+        attempt.locked_until = None
+    attempt.failed_attempts += 1
+    attempt.last_failed_at = now
+    if attempt.failed_attempts >= LOGIN_MAX_FAILURES:
+        attempt.locked_until = now + LOGIN_LOCKOUT
+        locked_until = attempt.locked_until
+        db.commit()
+        return _locked_login_error(locked_until)
+    remaining = LOGIN_MAX_FAILURES - attempt.failed_attempts
+    db.commit()
+    return HTTPException(
+        status_code=401,
+        detail=f"Username/email or password is incorrect. {remaining} more {('try' if remaining == 1 else 'tries')} available.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _check_login_lockout(db: DBSession, identifier_hash: str) -> None:
+    attempt = db.get(LoginAttempt, identifier_hash)
+    if attempt and attempt.locked_until:
+        now = datetime.now(timezone.utc)
+        locked_until = attempt.locked_until
+        # PostgreSQL may return a naive timestamp in older deployments.
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if locked_until > now:
+            raise _locked_login_error(locked_until)
 
 def _recovery_code_hash(account_id: str, code: str) -> str:
     material = f"spotlight-password-reset:{account_id}:{code}".encode("utf-8")
@@ -102,16 +181,23 @@ def login(payload: LoginRequest, request: Request, db: DBSession = Depends(get_d
         )
     )
 
+    # Key known accounts by account ID so switching between username and email
+    # cannot reset the counter. Unknown identifiers receive their own HMAC key.
+    lockout_identity = f"account:{account.id}" if account is not None else f"identifier:{login_identifier}"
+    identifier_hash = _login_identifier_hash(lockout_identity)
+    _check_login_lockout(db, identifier_hash)
+
     if (
         account is None
         or not account.is_active
         or not verify_password(payload.password, account.password_hash)
     ):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid email, username, or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _record_failed_login(db, identifier_hash)
+
+    attempt = db.get(LoginAttempt, identifier_hash)
+    if attempt is not None:
+        db.delete(attempt)
+        db.commit()
 
     return issue_tokens(db, account)
 

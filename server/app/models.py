@@ -81,6 +81,14 @@ class Session(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     account: Mapped["Account"] = relationship(back_populates="sessions")
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+    identifier_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
 class Favorite(Base):
     __tablename__ = "favorites"
     __table_args__ = (

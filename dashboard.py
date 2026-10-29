@@ -942,8 +942,8 @@ class Gate(ctk.CTkFrame):
             )
             return
 
-        if getattr(error, "status_code", None) == 401:
-            message = "Username/email or password is incorrect."
+        if getattr(error, "status_code", None) in {401, 423}:
+            message = str(error)
         elif error is not None:
             message = f"Could not sign in: {error}"
         else:
