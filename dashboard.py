@@ -344,7 +344,7 @@ class Gate(ctk.CTkFrame):
     def show_login(s):
         s.app.hide_favorites_button()
         s.clear(); s.header(); p=s.page
-        ctk.CTkLabel(p, text="Beta version 1.2.8.2", font=("Segoe UI", 13, "bold"),
+        ctk.CTkLabel(p, text="Beta version 1.2.8.3", font=("Segoe UI", 13, "bold"),
                      text_color=GOLD).pack(pady=(2, 4))
         tabs = ctk.CTkTabview(p, width=600, height=510, fg_color=PANEL); tabs.pack(pady=8)
         si, su = tabs.add("Sign In"), tabs.add("Create Profile")
@@ -420,6 +420,13 @@ class Gate(ctk.CTkFrame):
             width=320,
         )
         p1.pack(pady=(3, 6))
+        password_visible = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            sign_in_form,
+            text="Show password",
+            variable=password_visible,
+            command=lambda: p1.configure(show="" if password_visible.get() else "•"),
+        ).pack(anchor="w", padx=70, pady=(0, 4))
 
         remember = ctk.BooleanVar(value=cfg.get("remember_me", True))
         remembered_password = local_secrets.unprotect_text(
@@ -2081,7 +2088,7 @@ class Gate(ctk.CTkFrame):
                 ctk.CTkLabel(panel, image=picture, text="", corner_radius=72).pack(pady=(20, 8))
             except Exception:
                 pass
-        ctk.CTkLabel(panel, text=profile.get("display_name") or profile.get("username"),
+        ctk.CTkLabel(panel, text=profile.get("username") or profile.get("display_name"),
                      font=("Segoe UI", 23, "bold"), text_color=GOLD).pack(pady=(12, 3))
         role = "Administrator" if str(profile.get("role", "")).lower() == "admin" else "Spotlight member"
         ctk.CTkLabel(panel, text=f"@{profile.get('username', '')}  ·  {role}", text_color="#cfd3e0").pack(pady=2)

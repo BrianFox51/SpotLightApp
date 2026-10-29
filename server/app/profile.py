@@ -102,7 +102,9 @@ def get_public_profile(
     avatar = db.get(ProfileAvatar, member.id)
     return {
         "username": member.username,
-        "display_name": (profile.full_name if profile and profile.full_name else member.username),
+        # Public Community profiles identify members by username only. Never
+        # expose the account holder's private full name through this endpoint.
+        "display_name": member.username,
         "role": member.role,
         "created_at": member.created_at,
         "avatar_url": f"/api/v1/profiles/{member.username}/avatar" if avatar and visibility and visibility.show_avatar else None,
